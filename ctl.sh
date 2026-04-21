@@ -405,19 +405,6 @@ EOF
 
 nginx_https() {
   local trojan_grpc_block=""
-  if [ -n "${TROJAN_GRPC_SERVICE}" ]; then
-    trojan_grpc_block="$(cat <<EOF
-    location /${TROJAN_GRPC_SERVICE} {
-        grpc_set_header Host \$host;
-        grpc_set_header TE trailers;
-        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        grpc_read_timeout 86400;
-        grpc_pass grpc://127.0.0.1:13081;
-    }
-
-EOF
-)"
-  fi
   cat >"$NGINX_CONF" <<EOF
 server {
     listen 80;
@@ -435,8 +422,8 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen 443 ssl;
+    listen [::]:443 ssl;
     server_name ${DOMAIN};
     root ${APP_WWW};
 
@@ -1120,6 +1107,8 @@ set_defaults() {
   SS_PORT="${SS_PORT:-$DEFAULT_SS_PORT}"
   TUIC_PORT="${TUIC_PORT:-$DEFAULT_TUIC_PORT}"
   VMESS_PORT="${VMESS_PORT:-443}"
+  TROJAN_GRPC_PORT="${TROJAN_GRPC_PORT:-${CTL_TROJAN_GRPC_PORT:-2053}}"
+  TROJAN_GRPC_PORT="${TROJAN_GRPC_PORT:-${CTL_TROJAN_GRPC_PORT:-2053}}"
   REALITY_SERVER="${REALITY_SERVER:-$DEFAULT_REALITY_SERVER}"
   REALITY_SERVER_PORT="${REALITY_SERVER_PORT:-$DEFAULT_REALITY_SERVER_PORT}"
   SS_METHOD="${SS_METHOD:-$DEFAULT_SS_METHOD}"
@@ -1128,6 +1117,7 @@ set_defaults() {
   VMESS_WS_PATH="${VMESS_WS_PATH:-${CTL_VMESS_WS_PATH:-/ctl-vmess}}"
   TROJAN_WS_PATH="${TROJAN_WS_PATH:-${CTL_TROJAN_WS_PATH:-/ctl-trojan-ws}}"
   TROJAN_GRPC_SERVICE="${TROJAN_GRPC_SERVICE:-${CTL_TROJAN_GRPC_SERVICE:-ctl-trojan-grpc}}"
+  TROJAN_GRPC_PORT="${TROJAN_GRPC_PORT:-${CTL_TROJAN_GRPC_PORT:-2053}}"
   TROJAN_PASSWORD="${TROJAN_PASSWORD:-}"
 }
 
@@ -1176,6 +1166,7 @@ VMESS_WS_PATH="${VMESS_WS_PATH}"
 TROJAN_PASSWORD="${TROJAN_PASSWORD}"
 TROJAN_WS_PATH="${TROJAN_WS_PATH}"
 TROJAN_GRPC_SERVICE="${TROJAN_GRPC_SERVICE}"
+TROJAN_GRPC_PORT="${TROJAN_GRPC_PORT}"
 EOF
   if [ -n "${SELF_UPDATE_URL}" ]; then
     printf '%s\n' "${SELF_UPDATE_URL}" >"$SELF_URL_FILE"
@@ -1224,8 +1215,8 @@ trojan_ws_uri() {
 }
 
 trojan_grpc_uri() {
-  printf 'trojan://%s@%s:443?security=tls&sni=%s&alpn=h2&type=grpc&serviceName=%s&path=%s#CTL-Trojan-gRPC\n' \
-    "$TROJAN_PASSWORD" "$DOMAIN" "$DOMAIN" "$TROJAN_GRPC_SERVICE" "$TROJAN_GRPC_SERVICE"
+  printf 'trojan://%s@%s:%s?security=tls&sni=%s&alpn=h2&type=grpc&serviceName=%s&path=%s#CTL-Trojan-gRPC\n' \
+    "$TROJAN_PASSWORD" "$DOMAIN" "$TROJAN_GRPC_PORT" "$DOMAIN" "$TROJAN_GRPC_SERVICE" "$TROJAN_GRPC_SERVICE"
 }
 
 build_common_v2ray_lines() {
@@ -1343,7 +1334,7 @@ proxies:
   - name: "CTL-Trojan-gRPC"
     type: trojan
     server: ${DOMAIN}
-    port: 443
+    port: ${TROJAN_GRPC_PORT}
     password: "${TROJAN_PASSWORD}"
     udp: true
     sni: ${DOMAIN}
@@ -1386,19 +1377,6 @@ EOF
 
 nginx_https() {
   local trojan_grpc_block=""
-  if [ -n "${TROJAN_GRPC_SERVICE}" ]; then
-    trojan_grpc_block="$(cat <<EOF
-    location /${TROJAN_GRPC_SERVICE} {
-        grpc_set_header Host \$host;
-        grpc_set_header TE trailers;
-        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        grpc_read_timeout 86400;
-        grpc_pass grpc://127.0.0.1:13081;
-    }
-
-EOF
-)"
-  fi
   cat >"$NGINX_CONF" <<EOF
 map \$http_upgrade \$connection_upgrade {
     default upgrade;
@@ -1421,8 +1399,8 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen 443 ssl;
+    listen [::]:443 ssl;
     server_name ${DOMAIN};
     root ${APP_WWW};
 
@@ -1638,14 +1616,20 @@ write_config() {
     {
       "type": "trojan",
       "tag": "trojan-grpc-in",
-      "listen": "127.0.0.1",
-      "listen_port": 13081,
+      "listen": "0.0.0.0",
+      "listen_port": ${TROJAN_GRPC_PORT},
       "users": [
         {
           "name": "ctl-trojan",
           "password": "${TROJAN_PASSWORD}"
         }
       ],
+      "tls": {
+        "enabled": true,
+        "alpn": ["h2"],
+        "certificate_path": "${CERT_DIR}/fullchain.pem",
+        "key_path": "${CERT_DIR}/privkey.pem"
+      },
       "transport": {
         "type": "grpc",
         "service_name": "${TROJAN_GRPC_SERVICE}"
@@ -1762,7 +1746,7 @@ Trojan + WS + TLS
 
 Trojan + gRPC + TLS
   host: ${DOMAIN}
-  port: 443
+  port: ${TROJAN_GRPC_PORT}
   password: ${TROJAN_PASSWORD}
   service: ${TROJAN_GRPC_SERVICE}
   uri: $(trojan_grpc_uri)
@@ -2401,6 +2385,7 @@ set_defaults() {
   VMESS_WS_PATH="${VMESS_WS_PATH:-${CTL_VMESS_WS_PATH:-/ctl-vmess}}"
   TROJAN_WS_PATH="${TROJAN_WS_PATH:-${CTL_TROJAN_WS_PATH:-/ctl-trojan-ws}}"
   TROJAN_GRPC_SERVICE="${TROJAN_GRPC_SERVICE:-${CTL_TROJAN_GRPC_SERVICE:-ctl-trojan-grpc}}"
+  TROJAN_GRPC_PORT="${TROJAN_GRPC_PORT:-${CTL_TROJAN_GRPC_PORT:-2053}}"
   TROJAN_PASSWORD="${TROJAN_PASSWORD:-}"
   case "$VLESS_WS_PATH" in
     /*) ;;
@@ -2452,6 +2437,7 @@ VMESS_WS_PATH="${VMESS_WS_PATH}"
 TROJAN_PASSWORD="${TROJAN_PASSWORD}"
 TROJAN_WS_PATH="${TROJAN_WS_PATH}"
 TROJAN_GRPC_SERVICE="${TROJAN_GRPC_SERVICE}"
+TROJAN_GRPC_PORT="${TROJAN_GRPC_PORT}"
 EOF
   if [ -n "${SELF_UPDATE_URL}" ]; then
     printf '%s\n' "${SELF_UPDATE_URL}" >"$SELF_URL_FILE"
@@ -2470,13 +2456,14 @@ load_state() {
   VMESS_WS_PATH="${CTL_VMESS_WS_PATH:-${VMESS_WS_PATH:-}}"
   TROJAN_WS_PATH="${CTL_TROJAN_WS_PATH:-${TROJAN_WS_PATH:-}}"
   TROJAN_GRPC_SERVICE="${CTL_TROJAN_GRPC_SERVICE:-${TROJAN_GRPC_SERVICE:-}}"
+  TROJAN_GRPC_PORT="${CTL_TROJAN_GRPC_PORT:-${TROJAN_GRPC_PORT:-}}"
   TROJAN_PASSWORD="${TROJAN_PASSWORD:-}"
   set_defaults
 }
 
 firewall_open() {
   local tcp_ports udp_ports port
-  tcp_ports=("80" "443" "$ANYTLS_PORT" "$SS_PORT")
+  tcp_ports=("80" "443" "$ANYTLS_PORT" "$SS_PORT" "$TROJAN_GRPC_PORT")
   udp_ports=("$HY2_PORT" "$SS_PORT" "$TUIC_PORT")
   if has ufw; then
     for port in "${tcp_ports[@]}"; do ufw allow "${port}/tcp" >/dev/null 2>&1 || true; done
@@ -2486,7 +2473,7 @@ firewall_open() {
     for port in "${udp_ports[@]}"; do firewall-cmd --permanent --add-port="${port}/udp" >/dev/null 2>&1 || true; done
     firewall-cmd --reload >/dev/null 2>&1 || true
   else
-    warn "No supported local firewall manager was detected. Open the required ports in your provider firewall: 80/tcp, 443/tcp, 443/udp, ${ANYTLS_PORT}/tcp, ${SS_PORT}/tcp+udp, ${TUIC_PORT}/udp."
+    warn "No supported local firewall manager was detected. Open the required ports in your provider firewall: 80/tcp, 443/tcp, 443/udp, ${ANYTLS_PORT}/tcp, ${SS_PORT}/tcp+udp, ${TUIC_PORT}/udp, ${TROJAN_GRPC_PORT}/tcp."
   fi
 }
 
@@ -2514,19 +2501,6 @@ EOF
 
 nginx_https() {
   local trojan_grpc_block=""
-  if [ -n "${TROJAN_GRPC_SERVICE}" ]; then
-    trojan_grpc_block="$(cat <<EOF
-    location /${TROJAN_GRPC_SERVICE} {
-        grpc_set_header Host \$host;
-        grpc_set_header TE trailers;
-        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        grpc_read_timeout 86400;
-        grpc_pass grpc://127.0.0.1:13081;
-    }
-
-EOF
-)"
-  fi
   cat >"$NGINX_CONF" <<EOF
 map \$http_upgrade \$connection_upgrade {
     default upgrade;
@@ -2549,8 +2523,8 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen 443 ssl;
+    listen [::]:443 ssl;
     server_name ${DOMAIN};
     root ${APP_WWW};
 
@@ -2749,14 +2723,20 @@ write_config() {
     {
       "type": "trojan",
       "tag": "trojan-grpc-in",
-      "listen": "127.0.0.1",
-      "listen_port": 13081,
+      "listen": "0.0.0.0",
+      "listen_port": ${TROJAN_GRPC_PORT},
       "users": [
         {
           "name": "ctl-trojan",
           "password": "${TROJAN_PASSWORD}"
         }
       ],
+      "tls": {
+        "enabled": true,
+        "alpn": ["h2"],
+        "certificate_path": "${CERT_DIR}/fullchain.pem",
+        "key_path": "${CERT_DIR}/privkey.pem"
+      },
       "transport": {
         "type": "grpc",
         "service_name": "${TROJAN_GRPC_SERVICE}"
@@ -3218,7 +3198,7 @@ proxies:
   - name: "CTL-Trojan-gRPC"
     type: trojan
     server: ${DOMAIN}
-    port: 443
+    port: ${TROJAN_GRPC_PORT}
     password: "${TROJAN_PASSWORD}"
     udp: true
     sni: ${DOMAIN}
@@ -3329,19 +3309,6 @@ EOF
 
 nginx_https() {
   local trojan_grpc_block=""
-  if [ -n "${TROJAN_GRPC_SERVICE}" ]; then
-    trojan_grpc_block="$(cat <<EOF
-    location /${TROJAN_GRPC_SERVICE} {
-        grpc_set_header Host \$host;
-        grpc_set_header TE trailers;
-        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        grpc_read_timeout 86400;
-        grpc_pass grpc://127.0.0.1:13081;
-    }
-
-EOF
-)"
-  fi
   cat >"$NGINX_CONF" <<EOF
 map \$http_upgrade \$connection_upgrade {
     default upgrade;
@@ -3364,8 +3331,8 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen 443 ssl;
+    listen [::]:443 ssl;
     server_name ${DOMAIN};
     root ${APP_WWW};
 
@@ -3629,7 +3596,7 @@ Trojan + WS + TLS
 
 Trojan + gRPC + TLS
   host: ${DOMAIN}
-  port: 443
+  port: ${TROJAN_GRPC_PORT}
   password: ${TROJAN_PASSWORD}
   service: ${TROJAN_GRPC_SERVICE}
   uri: $(trojan_grpc_uri)
@@ -3796,15 +3763,17 @@ Environment variables:
   CTL_VMESS_WS_PATH=/ctl-vmess
   CTL_TROJAN_WS_PATH=/ctl-trojan-ws
   CTL_TROJAN_GRPC_SERVICE=ctl-trojan-grpc
+  CTL_TROJAN_GRPC_PORT=2053
   CTL_RESET_SECRETS=1
 
 Notes:
-  1. 443/tcp serves the subscription site plus the WS+TLS entries for VLESS, VMess, and Trojan, and the Trojan gRPC endpoint.
+  1. 443/tcp serves the subscription site plus the WS+TLS entries for VLESS, VMess, and Trojan.
   2. 443/udp is used by default for Hysteria2.
   3. Client-specific subscriptions are generated to reduce import errors.
-  4. Use /clash.yaml for Clash-family clients, /v2rayn.txt for v2rayN, /shadowrocket.txt for Shadowrocket, /karing.txt for Karing, and /universal for smart redirects.
-  5. AnyTLS is excluded from Clash and generic v2ray-style feeds, and kept only in Karing and raw outputs.
-  6. Run ctl site-check if Netflix, TikTok, ChatGPT, Claude, Gemini, or similar sites fail to open.
+  4. Trojan gRPC uses a dedicated TCP port by default: 2053.
+  5. Use /clash.yaml for Clash-family clients, /v2rayn.txt for v2rayN, /shadowrocket.txt for Shadowrocket, /karing.txt for Karing, and /universal for smart redirects.
+  6. AnyTLS is excluded from Clash and generic v2ray-style feeds, and kept only in Karing and raw outputs.
+  7. Run ctl site-check if Netflix, TikTok, ChatGPT, Claude, Gemini, or similar sites fail to open.
 EOF
 }
 
