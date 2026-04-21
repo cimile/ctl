@@ -404,6 +404,19 @@ EOF
 }
 
 nginx_https() {
+  local trojan_grpc_block=""
+  if [ -n "${TROJAN_GRPC_SERVICE}" ]; then
+    trojan_grpc_block="$(cat <<EOF
+    location /${TROJAN_GRPC_SERVICE} {
+        grpc_set_header Host \$host;
+        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        grpc_read_timeout 86400;
+        grpc_pass grpc://127.0.0.1:13081;
+    }
+
+EOF
+)"
+  fi
   cat >"$NGINX_CONF" <<EOF
 server {
     listen 80;
@@ -1349,6 +1362,19 @@ EOF
 }
 
 nginx_https() {
+  local trojan_grpc_block=""
+  if [ -n "${TROJAN_GRPC_SERVICE}" ]; then
+    trojan_grpc_block="$(cat <<EOF
+    location /${TROJAN_GRPC_SERVICE} {
+        grpc_set_header Host \$host;
+        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        grpc_read_timeout 86400;
+        grpc_pass grpc://127.0.0.1:13081;
+    }
+
+EOF
+)"
+  fi
   cat >"$NGINX_CONF" <<EOF
 map \$http_upgrade \$connection_upgrade {
     default upgrade;
@@ -1443,12 +1469,7 @@ server {
         proxy_read_timeout 86400;
     }
 
-    location /${TROJAN_GRPC_SERVICE} {
-        grpc_set_header Host \$host;
-        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        grpc_read_timeout 86400;
-        grpc_pass grpc://127.0.0.1:13081;
-    }
+${trojan_grpc_block}
 
     location / {
         try_files \$uri \$uri/ /index.html =404;
@@ -2342,6 +2363,23 @@ set_defaults() {
   HY2_OBFS_TYPE="${HY2_OBFS_TYPE:-$DEFAULT_HY2_OBFS}"
   VLESS_WS_PATH="${VLESS_WS_PATH:-${CTL_VLESS_WS_PATH:-/ctl-vless}}"
   VMESS_WS_PATH="${VMESS_WS_PATH:-${CTL_VMESS_WS_PATH:-/ctl-vmess}}"
+  TROJAN_WS_PATH="${TROJAN_WS_PATH:-${CTL_TROJAN_WS_PATH:-/ctl-trojan-ws}}"
+  TROJAN_GRPC_SERVICE="${TROJAN_GRPC_SERVICE:-${CTL_TROJAN_GRPC_SERVICE:-ctl-trojan-grpc}}"
+  TROJAN_PASSWORD="${TROJAN_PASSWORD:-}"
+  case "$VLESS_WS_PATH" in
+    /*) ;;
+    *) VLESS_WS_PATH="/${VLESS_WS_PATH}" ;;
+  esac
+  case "$VMESS_WS_PATH" in
+    /*) ;;
+    *) VMESS_WS_PATH="/${VMESS_WS_PATH}" ;;
+  esac
+  case "$TROJAN_WS_PATH" in
+    /*) ;;
+    *) TROJAN_WS_PATH="/${TROJAN_WS_PATH}" ;;
+  esac
+  TROJAN_GRPC_SERVICE="${TROJAN_GRPC_SERVICE#/}"
+  TROJAN_GRPC_SERVICE="${TROJAN_GRPC_SERVICE:-ctl-trojan-grpc}"
 }
 
 save_state() {
@@ -2375,6 +2413,9 @@ VMESS_UUID="${VMESS_UUID}"
 SELF_UPDATE_URL="${SELF_UPDATE_URL}"
 VLESS_WS_PATH="${VLESS_WS_PATH}"
 VMESS_WS_PATH="${VMESS_WS_PATH}"
+TROJAN_PASSWORD="${TROJAN_PASSWORD}"
+TROJAN_WS_PATH="${TROJAN_WS_PATH}"
+TROJAN_GRPC_SERVICE="${TROJAN_GRPC_SERVICE}"
 EOF
   if [ -n "${SELF_UPDATE_URL}" ]; then
     printf '%s\n' "${SELF_UPDATE_URL}" >"$SELF_URL_FILE"
@@ -2389,6 +2430,12 @@ load_state() {
   DOMAIN="${CTL_DOMAIN:-${DOMAIN:-}}"
   EMAIL="${CTL_EMAIL:-${EMAIL:-}}"
   SELF_UPDATE_URL="${CTL_SCRIPT_URL:-${SELF_UPDATE_URL:-}}"
+  VLESS_WS_PATH="${CTL_VLESS_WS_PATH:-${VLESS_WS_PATH:-}}"
+  VMESS_WS_PATH="${CTL_VMESS_WS_PATH:-${VMESS_WS_PATH:-}}"
+  TROJAN_WS_PATH="${CTL_TROJAN_WS_PATH:-${TROJAN_WS_PATH:-}}"
+  TROJAN_GRPC_SERVICE="${CTL_TROJAN_GRPC_SERVICE:-${TROJAN_GRPC_SERVICE:-}}"
+  TROJAN_PASSWORD="${TROJAN_PASSWORD:-}"
+  set_defaults
 }
 
 firewall_open() {
@@ -2430,6 +2477,19 @@ EOF
 }
 
 nginx_https() {
+  local trojan_grpc_block=""
+  if [ -n "${TROJAN_GRPC_SERVICE}" ]; then
+    trojan_grpc_block="$(cat <<EOF
+    location /${TROJAN_GRPC_SERVICE} {
+        grpc_set_header Host \$host;
+        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        grpc_read_timeout 86400;
+        grpc_pass grpc://127.0.0.1:13081;
+    }
+
+EOF
+)"
+  fi
   cat >"$NGINX_CONF" <<EOF
 map \$http_upgrade \$connection_upgrade {
     default upgrade;
@@ -3219,6 +3279,19 @@ EOF
 }
 
 nginx_https() {
+  local trojan_grpc_block=""
+  if [ -n "${TROJAN_GRPC_SERVICE}" ]; then
+    trojan_grpc_block="$(cat <<EOF
+    location /${TROJAN_GRPC_SERVICE} {
+        grpc_set_header Host \$host;
+        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        grpc_read_timeout 86400;
+        grpc_pass grpc://127.0.0.1:13081;
+    }
+
+EOF
+)"
+  fi
   cat >"$NGINX_CONF" <<EOF
 map \$http_upgrade \$connection_upgrade {
     default upgrade;
@@ -3313,12 +3386,7 @@ server {
         proxy_read_timeout 86400;
     }
 
-    location /${TROJAN_GRPC_SERVICE} {
-        grpc_set_header Host \$host;
-        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        grpc_read_timeout 86400;
-        grpc_pass grpc://127.0.0.1:13081;
-    }
+${trojan_grpc_block}
 
     location / {
         try_files \$uri \$uri/ /index.html =404;
