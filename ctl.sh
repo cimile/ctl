@@ -409,6 +409,7 @@ nginx_https() {
     trojan_grpc_block="$(cat <<EOF
     location /${TROJAN_GRPC_SERVICE} {
         grpc_set_header Host \$host;
+        grpc_set_header TE trailers;
         grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         grpc_read_timeout 86400;
         grpc_pass grpc://127.0.0.1:13081;
@@ -1218,13 +1219,13 @@ gen_secrets() {
 trojan_ws_uri() {
   local trojan_path_encoded
   trojan_path_encoded="${TROJAN_WS_PATH//\//%2F}"
-  printf 'trojan://%s@%s:443?security=tls&sni=%s&type=ws&host=%s&path=%s#CTL-Trojan-WS\n' \
+  printf 'trojan://%s@%s:443?security=tls&sni=%s&alpn=http%%2F1.1&type=ws&host=%s&path=%s#CTL-Trojan-WS\n' \
     "$TROJAN_PASSWORD" "$DOMAIN" "$DOMAIN" "$DOMAIN" "$trojan_path_encoded"
 }
 
 trojan_grpc_uri() {
-  printf 'trojan://%s@%s:443?security=tls&sni=%s&type=grpc&serviceName=%s#CTL-Trojan-gRPC\n' \
-    "$TROJAN_PASSWORD" "$DOMAIN" "$DOMAIN" "$TROJAN_GRPC_SERVICE"
+  printf 'trojan://%s@%s:443?security=tls&sni=%s&alpn=h2&type=grpc&serviceName=%s&path=%s#CTL-Trojan-gRPC\n' \
+    "$TROJAN_PASSWORD" "$DOMAIN" "$DOMAIN" "$TROJAN_GRPC_SERVICE" "$TROJAN_GRPC_SERVICE"
 }
 
 build_common_v2ray_lines() {
@@ -1389,6 +1390,7 @@ nginx_https() {
     trojan_grpc_block="$(cat <<EOF
     location /${TROJAN_GRPC_SERVICE} {
         grpc_set_header Host \$host;
+        grpc_set_header TE trailers;
         grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         grpc_read_timeout 86400;
         grpc_pass grpc://127.0.0.1:13081;
@@ -1461,6 +1463,8 @@ server {
     location = ${VLESS_WS_PATH} {
         proxy_pass http://127.0.0.1:11080;
         proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
         proxy_set_header Host \$host;
@@ -1472,6 +1476,8 @@ server {
     location = ${VMESS_WS_PATH} {
         proxy_pass http://127.0.0.1:12080;
         proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
         proxy_set_header Host \$host;
@@ -1483,6 +1489,8 @@ server {
     location = ${TROJAN_WS_PATH} {
         proxy_pass http://127.0.0.1:13080;
         proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
         proxy_set_header Host \$host;
@@ -2510,6 +2518,7 @@ nginx_https() {
     trojan_grpc_block="$(cat <<EOF
     location /${TROJAN_GRPC_SERVICE} {
         grpc_set_header Host \$host;
+        grpc_set_header TE trailers;
         grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         grpc_read_timeout 86400;
         grpc_pass grpc://127.0.0.1:13081;
@@ -2580,6 +2589,8 @@ server {
     location = ${VLESS_WS_PATH} {
         proxy_pass http://127.0.0.1:11080;
         proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
         proxy_set_header Host \$host;
@@ -2591,6 +2602,8 @@ server {
     location = ${VMESS_WS_PATH} {
         proxy_pass http://127.0.0.1:12080;
         proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
         proxy_set_header Host \$host;
@@ -2770,7 +2783,7 @@ EOF
 vmess_uri() {
   local json
   json=$(cat <<EOF
-{"v":"2","ps":"CTL-VMess-WS","add":"${DOMAIN}","port":"${VMESS_PORT}","id":"${VMESS_UUID}","aid":"0","scy":"auto","net":"ws","type":"none","host":"${DOMAIN}","path":"${VMESS_WS_PATH}","tls":"tls","sni":"${DOMAIN}"}
+{"v":"2","ps":"CTL-VMess-WS","add":"${DOMAIN}","port":"${VMESS_PORT}","id":"${VMESS_UUID}","aid":"0","scy":"auto","net":"ws","type":"none","host":"${DOMAIN}","path":"${VMESS_WS_PATH}","tls":"tls","sni":"${DOMAIN}","fp":"chrome","alpn":"http/1.1"}
 EOF
 )
   printf 'vmess://%s\n' "$(printf '%s' "$json" | base64_one_line)"
@@ -3071,7 +3084,7 @@ EOF
 vless_ws_uri() {
   local vless_path_encoded
   vless_path_encoded="${VLESS_WS_PATH//\//%2F}"
-  printf 'vless://%s@%s:%s?encryption=none&security=tls&sni=%s&fp=chrome&type=ws&host=%s&path=%s#CTL-VLESS-WS\n' \
+  printf 'vless://%s@%s:%s?encryption=none&security=tls&sni=%s&fp=chrome&alpn=http%%2F1.1&type=ws&host=%s&path=%s#CTL-VLESS-WS\n' \
     "$VLESS_UUID" "$DOMAIN" "$VLESS_PORT" "$DOMAIN" "$DOMAIN" "$vless_path_encoded"
 }
 
@@ -3157,6 +3170,8 @@ proxies:
     servername: ${DOMAIN}
     client-fingerprint: chrome
     skip-cert-verify: false
+    alpn:
+      - http/1.1
     network: ws
     ws-opts:
       path: ${VLESS_WS_PATH}
@@ -3175,6 +3190,8 @@ proxies:
     servername: ${DOMAIN}
     client-fingerprint: chrome
     skip-cert-verify: false
+    alpn:
+      - http/1.1
     network: ws
     ws-opts:
       path: ${VMESS_WS_PATH}
@@ -3190,6 +3207,8 @@ proxies:
     sni: ${DOMAIN}
     client-fingerprint: chrome
     skip-cert-verify: false
+    alpn:
+      - http/1.1
     network: ws
     ws-opts:
       path: ${TROJAN_WS_PATH}
@@ -3205,6 +3224,8 @@ proxies:
     sni: ${DOMAIN}
     client-fingerprint: chrome
     skip-cert-verify: false
+    alpn:
+      - h2
     network: grpc
     grpc-opts:
       grpc-service-name: ${TROJAN_GRPC_SERVICE}
@@ -3312,6 +3333,7 @@ nginx_https() {
     trojan_grpc_block="$(cat <<EOF
     location /${TROJAN_GRPC_SERVICE} {
         grpc_set_header Host \$host;
+        grpc_set_header TE trailers;
         grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         grpc_read_timeout 86400;
         grpc_pass grpc://127.0.0.1:13081;
@@ -3384,6 +3406,8 @@ server {
     location = ${VLESS_WS_PATH} {
         proxy_pass http://127.0.0.1:11080;
         proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
         proxy_set_header Host \$host;
@@ -3395,6 +3419,8 @@ server {
     location = ${VMESS_WS_PATH} {
         proxy_pass http://127.0.0.1:12080;
         proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
         proxy_set_header Host \$host;
@@ -3406,6 +3432,8 @@ server {
     location = ${TROJAN_WS_PATH} {
         proxy_pass http://127.0.0.1:13080;
         proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
         proxy_set_header Host \$host;
