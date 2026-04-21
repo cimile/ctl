@@ -21,7 +21,7 @@ SING_SERVICE="/etc/systemd/system/sing-box.service"
 ACME_HOME="/root/.acme.sh"
 ACME_SH="${ACME_HOME}/acme.sh"
 SCRIPT_SELF="${BASH_SOURCE[0]:-$0}"
-DEFAULT_SCRIPT_URL="https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh"
+DEFAULT_SCRIPT_URL="https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh"
 
 DEFAULT_ANYTLS_PORT="${CTL_ANYTLS_PORT:-8443}"
 DEFAULT_HY2_PORT="${CTL_HY2_PORT:-443}"
@@ -1011,12 +1011,12 @@ Usage:
   ctl restart
   ctl uninstall
   ctl tune-network
-  ctl set-update-url https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh
+  ctl set-update-url https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
 
 Environment variables:
   CTL_DOMAIN=your.domain.com
   CTL_EMAIL=you@example.com
-  CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh
+  CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
   CTL_RESET_SECRETS=1
 
 Notes:
@@ -1723,12 +1723,12 @@ Usage:
   ctl restart
   ctl uninstall
   ctl tune-network
-  ctl set-update-url https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh
+  ctl set-update-url https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
 
 Environment variables:
   CTL_DOMAIN=your.domain.com
   CTL_EMAIL=you@example.com
-  CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh
+  CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
   CTL_VLESS_WS_PATH=/ctl-vless
   CTL_VMESS_WS_PATH=/ctl-vmess
   CTL_TROJAN_WS_PATH=/ctl-trojan-ws
@@ -2266,12 +2266,12 @@ Usage:
   ctl restart
   ctl uninstall
   ctl tune-network
-  ctl set-update-url https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh
+  ctl set-update-url https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
 
 Environment variables:
   CTL_DOMAIN=your.domain.com
   CTL_EMAIL=you@example.com
-  CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh
+  CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
   CTL_RESET_SECRETS=1
 
 Notes:
@@ -2913,12 +2913,12 @@ Usage:
   ctl restart
   ctl uninstall
   ctl tune-network
-  ctl set-update-url https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh
+  ctl set-update-url https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
 
 Environment variables:
   CTL_DOMAIN=your.domain.com
   CTL_EMAIL=you@example.com
-  CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh
+  CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
   CTL_VLESS_WS_PATH=/ctl-vless
   CTL_VMESS_WS_PATH=/ctl-vmess
   CTL_RESET_SECRETS=1
@@ -3617,12 +3617,12 @@ Usage:
   ctl uninstall
   ctl site-check
   ctl tune-network
-  ctl set-update-url https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh
+  ctl set-update-url https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
 
 Environment variables:
   CTL_DOMAIN=your.domain.com
   CTL_EMAIL=you@example.com
-  CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh
+  CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
   CTL_VLESS_WS_PATH=/ctl-vless
   CTL_VMESS_WS_PATH=/ctl-vmess
   CTL_TROJAN_WS_PATH=/ctl-trojan-ws

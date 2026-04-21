@@ -33,7 +33,7 @@ It also manages:
 Run directly from GitHub Raw:
 
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh)
+bash <(wget -qO- https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh)
 ```
 
 After installation:
@@ -47,8 +47,8 @@ ctl
 ```bash
 CTL_DOMAIN=your.domain.com \
 CTL_EMAIL=you@example.com \
-CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh \
-bash <(wget -qO- https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh)
+CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh \
+bash <(wget -qO- https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh)
 ```
 
 ## Main Commands
@@ -64,7 +64,7 @@ ctl restart
 ctl uninstall
 ctl site-check
 ctl tune-network
-ctl set-update-url https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh
+ctl set-update-url https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
 ```
 
 ## Environment Variables
@@ -72,7 +72,7 @@ ctl set-update-url https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh
 ```bash
 CTL_DOMAIN=your.domain.com
 CTL_EMAIL=you@example.com
-CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/kimi/main/ctl.sh
+CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
 CTL_VLESS_WS_PATH=/ctl-vless
 CTL_VMESS_WS_PATH=/ctl-vmess
 CTL_TROJAN_WS_PATH=/ctl-trojan-ws
