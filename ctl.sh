@@ -921,23 +921,45 @@ update_core() {
   info "sing-box updated to ${latest}"
 }
 
+repair_runtime() {
+  load_state
+  detect_os
+  [ -f "$STATE_FILE" ] || fail "No installed configuration was found."
+  ensure_dirs
+  set_defaults
+  save_state
+  write_service
+  write_config
+  check_config
+  write_sub_files
+  write_client_info
+  nginx_https
+  systemctl enable --now sing-box
+  systemctl restart sing-box
+  info "Runtime config, subscriptions, and nginx routing were rebuilt."
+}
+
 update_all() {
+  local rerun="${CTL_SYNC_UPDATE_RERUN:-0}"
   load_state
   [ -f "$STATE_FILE" ] || fail "No installed configuration was found."
-  update_core
-  if [ -n "${SELF_UPDATE_URL:-}" ] || [ -f "$SELF_URL_FILE" ]; then
-    update_panel
-  else
-    warn "No script self-update URL is configured, so only sing-box was updated."
+  if [ "$rerun" != "1" ]; then
+    update_core
+    if [ -n "${SELF_UPDATE_URL:-}" ] || [ -f "$SELF_URL_FILE" ]; then
+      update_panel
+      if [ -x "$SELF_BIN" ]; then
+        info "Reloading the updated panel to apply the latest runtime templates..."
+        CTL_SYNC_UPDATE_RERUN=1 exec "$SELF_BIN" sync-update
+      fi
+    else
+      warn "No script self-update URL is configured, so only sing-box was updated."
+    fi
   fi
+  repair_runtime
   if [ -x "$ACME_SH" ]; then
     "$ACME_SH" --cron --home "$ACME_HOME" >/dev/null 2>&1 || true
   fi
-  write_sub_files
-  write_client_info
-  systemctl reload nginx || true
-  systemctl restart sing-box || true
-  info "Sync update completed."
+  info "Sync update completed. Core, panel, config, subscriptions, and nginx routing were refreshed."
 }
 
 restart_all() {
@@ -2205,22 +2227,26 @@ update_core() {
 }
 
 update_all() {
+  local rerun="${CTL_SYNC_UPDATE_RERUN:-0}"
   load_state
   [ -f "$STATE_FILE" ] || fail "No installed configuration was found."
-  update_core
-  if [ -n "${SELF_UPDATE_URL:-}" ] || [ -f "$SELF_URL_FILE" ]; then
-    update_panel
-  else
-    warn "No script self-update URL is configured, so only sing-box was updated."
+  if [ "$rerun" != "1" ]; then
+    update_core
+    if [ -n "${SELF_UPDATE_URL:-}" ] || [ -f "$SELF_URL_FILE" ]; then
+      update_panel
+      if [ -x "$SELF_BIN" ]; then
+        info "Reloading the updated panel to apply the latest runtime templates..."
+        CTL_SYNC_UPDATE_RERUN=1 exec "$SELF_BIN" sync-update
+      fi
+    else
+      warn "No script self-update URL is configured, so only sing-box was updated."
+    fi
   fi
+  repair_runtime
   if [ -x "$ACME_SH" ]; then
     "$ACME_SH" --cron --home "$ACME_HOME" >/dev/null 2>&1 || true
   fi
-  write_sub_files
-  write_client_info
-  systemctl reload nginx || true
-  systemctl restart sing-box || true
-  info "Sync update completed."
+  info "Sync update completed. Core, panel, config, subscriptions, and nginx routing were refreshed."
 }
 
 restart_all() {
@@ -2292,6 +2318,7 @@ menu() {
 8. Uninstall
 9. Enable BBR / network tuning
 10. Check AI / streaming / social reachability
+11. Repair runtime config and subscriptions
 0. Exit
 EOF
 }
@@ -2312,6 +2339,7 @@ loop_menu() {
       8) uninstall_all ;;
       9) sysctl_tune ;;
       10) site_check ;;
+      11) repair_runtime ;;
       0) exit 0 ;;
       *) warn "Invalid choice. Please try again." ;;
     esac
@@ -3725,6 +3753,7 @@ Usage:
   ctl sub
   ctl renew
   ctl update
+  ctl repair
   ctl restart
   ctl uninstall
   ctl site-check
@@ -3760,6 +3789,7 @@ main() {
     sub|subscription) show_sub ;;
     renew) renew_cert ;;
     update|sync-update) update_all ;;
+    repair|rebuild|refresh-runtime) repair_runtime ;;
     update-core) update_core ;;
     update-panel) update_panel "${2:-}" ;;
     site-check|unlock-check|check-sites) site_check ;;
