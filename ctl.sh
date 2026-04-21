@@ -449,12 +449,34 @@ EOF
 }
 
 issue_cert() {
-  info "Issuing Let's Encrypt ECC certificate..."
-  "$ACME_SH" --issue -d "$DOMAIN" --webroot "$APP_WWW" --server letsencrypt --keylength ec-256
-  "$ACME_SH" --install-cert -d "$DOMAIN" --ecc \
-    --key-file "${CERT_DIR}/privkey.pem" \
-    --fullchain-file "${CERT_DIR}/fullchain.pem" \
-    --reloadcmd "systemctl reload nginx >/dev/null 2>&1 || true; systemctl restart sing-box >/dev/null 2>&1 || true"
+  local acme_domain_dir
+  acme_domain_dir="${ACME_HOME}/${DOMAIN}_ecc"
+
+  install_cert_files() {
+    "$ACME_SH" --install-cert -d "$DOMAIN" --ecc \
+      --key-file "${CERT_DIR}/privkey.pem" \
+      --fullchain-file "${CERT_DIR}/fullchain.pem" \
+      --reloadcmd "systemctl reload nginx >/dev/null 2>&1 || true; systemctl restart sing-box >/dev/null 2>&1 || true"
+  }
+
+  if [ -d "$acme_domain_dir" ]; then
+    info "Existing ACME material was detected for ${DOMAIN}. Reusing the current certificate first..."
+    if install_cert_files; then
+      chmod 600 "${CERT_DIR}/privkey.pem"
+      chmod 644 "${CERT_DIR}/fullchain.pem"
+      return 0
+    fi
+    warn "Existing ACME material could not be installed cleanly. Forcing certificate renewal..."
+    if ! "$ACME_SH" --renew -d "$DOMAIN" --ecc --force; then
+      warn "Forced renewal failed. Trying a forced re-issue..."
+      "$ACME_SH" --issue -d "$DOMAIN" --webroot "$APP_WWW" --server letsencrypt --keylength ec-256 --force
+    fi
+  else
+    info "Issuing Let's Encrypt ECC certificate..."
+    "$ACME_SH" --issue -d "$DOMAIN" --webroot "$APP_WWW" --server letsencrypt --keylength ec-256
+  fi
+
+  install_cert_files
   chmod 600 "${CERT_DIR}/privkey.pem"
   chmod 644 "${CERT_DIR}/fullchain.pem"
 }
@@ -1916,12 +1938,34 @@ install_acme() {
 }
 
 issue_cert() {
-  info "Issuing Let's Encrypt ECC certificate..."
-  "$ACME_SH" --issue -d "$DOMAIN" --webroot "$APP_WWW" --server letsencrypt --keylength ec-256
-  "$ACME_SH" --install-cert -d "$DOMAIN" --ecc \
-    --key-file "${CERT_DIR}/privkey.pem" \
-    --fullchain-file "${CERT_DIR}/fullchain.pem" \
-    --reloadcmd "systemctl reload nginx >/dev/null 2>&1 || true; systemctl restart sing-box >/dev/null 2>&1 || true"
+  local acme_domain_dir
+  acme_domain_dir="${ACME_HOME}/${DOMAIN}_ecc"
+
+  install_cert_files() {
+    "$ACME_SH" --install-cert -d "$DOMAIN" --ecc \
+      --key-file "${CERT_DIR}/privkey.pem" \
+      --fullchain-file "${CERT_DIR}/fullchain.pem" \
+      --reloadcmd "systemctl reload nginx >/dev/null 2>&1 || true; systemctl restart sing-box >/dev/null 2>&1 || true"
+  }
+
+  if [ -d "$acme_domain_dir" ]; then
+    info "Existing ACME material was detected for ${DOMAIN}. Reusing the current certificate first..."
+    if install_cert_files; then
+      chmod 600 "${CERT_DIR}/privkey.pem"
+      chmod 644 "${CERT_DIR}/fullchain.pem"
+      return 0
+    fi
+    warn "Existing ACME material could not be installed cleanly. Forcing certificate renewal..."
+    if ! "$ACME_SH" --renew -d "$DOMAIN" --ecc --force; then
+      warn "Forced renewal failed. Trying a forced re-issue..."
+      "$ACME_SH" --issue -d "$DOMAIN" --webroot "$APP_WWW" --server letsencrypt --keylength ec-256 --force
+    fi
+  else
+    info "Issuing Let's Encrypt ECC certificate..."
+    "$ACME_SH" --issue -d "$DOMAIN" --webroot "$APP_WWW" --server letsencrypt --keylength ec-256
+  fi
+
+  install_cert_files
   chmod 600 "${CERT_DIR}/privkey.pem"
   chmod 644 "${CERT_DIR}/fullchain.pem"
 }
