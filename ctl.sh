@@ -3730,13 +3730,13 @@ site_check() {
   ip="$(public_ipv4)"
 
   printf 'CTL site reachability check\n'
-  printf '============================\n'
+  printf '%s\n' '============================'
   if [ -n "$ip" ]; then
     printf 'Current VPS IPv4: %s\n' "$ip"
   fi
   printf '\n'
   printf 'AI services\n'
-  printf '-----------\n'
+  printf '%s\n' '-----------'
   probe_generic_site "ChatGPT Web" "https://chatgpt.com/"
   probe_generic_site "OpenAI API" "https://api.openai.com/v1/models"
   probe_generic_site "Claude" "https://claude.ai/login"
@@ -3744,14 +3744,14 @@ site_check() {
   probe_generic_site "Perplexity" "https://www.perplexity.ai/"
   printf '\n'
   printf 'Streaming / social\n'
-  printf '------------------\n'
+  printf '%s\n' '------------------'
   probe_netflix_site
   probe_generic_site "TikTok" "https://www.tiktok.com/"
   probe_generic_site "Facebook" "https://www.facebook.com/"
   probe_generic_site "X" "https://x.com/"
   printf '\n'
   printf 'Notes\n'
-  printf '-----\n'
+  printf '%s\n' '-----'
   printf '%s\n' "1. This check reflects the VPS egress IP, not a specific protocol."
   printf '%s\n' "2. If a service fails here, switching between Hysteria2, TUIC, VLESS, VMess, or Trojan usually will not fix it."
   printf '%s\n' "3. For login-heavy sites, try Trojan WS, Trojan gRPC, or VLESS WS first."
@@ -4975,13 +4975,13 @@ site_check() {
   ip="$(public_ipv4)"
 
   printf 'CTL site reachability check\n'
-  printf '============================\n'
+  printf '%s\n' '============================'
   if [ -n "$ip" ]; then
     printf 'Current VPS IPv4: %s\n' "$ip"
   fi
   printf '\n'
   printf 'AI services\n'
-  printf '-----------\n'
+  printf '%s\n' '-----------'
   probe_generic_site "ChatGPT Web" "https://chatgpt.com/"
   probe_generic_site "OpenAI API" "https://api.openai.com/v1/models"
   probe_generic_site "Claude" "https://claude.ai/login"
@@ -4989,14 +4989,14 @@ site_check() {
   probe_generic_site "Perplexity" "https://www.perplexity.ai/"
   printf '\n'
   printf 'Streaming / social\n'
-  printf '------------------\n'
+  printf '%s\n' '------------------'
   probe_netflix_site
   probe_generic_site "TikTok" "https://www.tiktok.com/"
   probe_generic_site "Facebook" "https://www.facebook.com/"
   probe_generic_site "X" "https://x.com/"
   printf '\n'
   printf 'Notes\n'
-  printf '-----\n'
+  printf '%s\n' '-----'
   printf '%s\n' "1. This check reflects the VPS egress IP, not a specific protocol."
   printf '%s\n' "2. If a service fails here, switching between Hysteria2, TUIC, Shadowsocks 2022, VLESS XHTTP Reality, or Trojan Reality usually will not fix it."
   printf '%s\n' "3. For login-heavy sites, try VLESS XHTTP Reality or Trojan Reality first."
