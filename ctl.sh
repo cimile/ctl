@@ -3119,6 +3119,9 @@ dns:
   enable: true
   ipv6: true
   respect-rules: true
+  proxy-server-nameserver:
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
   nameserver:
     - https://cloudflare-dns.com/dns-query
     - https://dns.google/dns-query
@@ -3791,6 +3794,1248 @@ Notes:
   5. Use /clash.yaml for Clash-family clients, /v2rayn.txt for v2rayN, /shadowrocket.txt for Shadowrocket, /karing.txt for Karing, and /universal for smart redirects.
   6. AnyTLS is excluded from Clash and generic v2ray-style feeds, and kept only in Karing and raw outputs.
   7. Run ctl site-check if Netflix, TikTok, ChatGPT, Claude, Gemini, or similar sites fail to open.
+EOF
+}
+
+# Active runtime overrides:
+# - Server stack: sing-box for Hysteria2 / TUIC / Shadowsocks-2022, Xray for Reality entries
+# - Subscription strategy: per-client outputs with unsupported protocols excluded
+
+XRAY_DIR="/etc/xray"
+XRAY_CONFIG="${XRAY_DIR}/config.json"
+XRAY_SERVICE="/etc/systemd/system/xray.service"
+XRAY_VERSION_FILE="${APP_ETC}/xray.version"
+DEFAULT_TROJAN_PORT="${CTL_TROJAN_REALITY_PORT:-9443}"
+DEFAULT_XHTTP_PATH="${CTL_XHTTP_PATH:-/ctl-xhttp}"
+DEFAULT_SS_METHOD="2022-blake3-aes-256-gcm"
+
+set_defaults() {
+  HY2_PORT="${HY2_PORT:-$DEFAULT_HY2_PORT}"
+  VLESS_PORT="${VLESS_PORT:-$DEFAULT_VLESS_PORT}"
+  SS_PORT="${SS_PORT:-$DEFAULT_SS_PORT}"
+  TUIC_PORT="${TUIC_PORT:-$DEFAULT_TUIC_PORT}"
+  TROJAN_PORT="${TROJAN_PORT:-$DEFAULT_TROJAN_PORT}"
+  REALITY_SERVER="${REALITY_SERVER:-$DEFAULT_REALITY_SERVER}"
+  REALITY_SERVER_PORT="${REALITY_SERVER_PORT:-$DEFAULT_REALITY_SERVER_PORT}"
+  SS_METHOD="${SS_METHOD:-$DEFAULT_SS_METHOD}"
+  HY2_OBFS_TYPE="${HY2_OBFS_TYPE:-$DEFAULT_HY2_OBFS}"
+  XHTTP_PATH="${XHTTP_PATH:-${CTL_XHTTP_PATH:-$DEFAULT_XHTTP_PATH}}"
+  case "$XHTTP_PATH" in
+    /*) ;;
+    *) XHTTP_PATH="/${XHTTP_PATH}" ;;
+  esac
+}
+
+load_state() {
+  if [ -f "$STATE_FILE" ]; then
+    # shellcheck disable=SC1090
+    . "$STATE_FILE"
+  fi
+  DOMAIN="${CTL_DOMAIN:-${DOMAIN:-}}"
+  EMAIL="${CTL_EMAIL:-${EMAIL:-}}"
+  SELF_UPDATE_URL="${CTL_SCRIPT_URL:-${SELF_UPDATE_URL:-}}"
+  XHTTP_PATH="${CTL_XHTTP_PATH:-${XHTTP_PATH:-}}"
+  set_defaults
+}
+
+save_state() {
+  ensure_dirs
+  cat >"$STATE_FILE" <<EOF
+DOMAIN="${DOMAIN}"
+EMAIL="${EMAIL}"
+HY2_PORT="${HY2_PORT}"
+VLESS_PORT="${VLESS_PORT}"
+SS_PORT="${SS_PORT}"
+TUIC_PORT="${TUIC_PORT}"
+TROJAN_PORT="${TROJAN_PORT}"
+REALITY_SERVER="${REALITY_SERVER}"
+REALITY_SERVER_PORT="${REALITY_SERVER_PORT}"
+SS_METHOD="${SS_METHOD}"
+HY2_OBFS_TYPE="${HY2_OBFS_TYPE}"
+SUB_TOKEN="${SUB_TOKEN}"
+SUB_PATH="${SUB_PATH}"
+HY2_PASSWORD="${HY2_PASSWORD}"
+HY2_OBFS_PASSWORD="${HY2_OBFS_PASSWORD}"
+VLESS_UUID="${VLESS_UUID}"
+REALITY_PRIVATE_KEY="${REALITY_PRIVATE_KEY}"
+REALITY_PUBLIC_KEY="${REALITY_PUBLIC_KEY}"
+REALITY_SHORT_ID="${REALITY_SHORT_ID}"
+SS_PASSWORD="${SS_PASSWORD}"
+TUIC_UUID="${TUIC_UUID}"
+TUIC_PASSWORD="${TUIC_PASSWORD}"
+TROJAN_PASSWORD="${TROJAN_PASSWORD}"
+SELF_UPDATE_URL="${SELF_UPDATE_URL}"
+XHTTP_PATH="${XHTTP_PATH}"
+EOF
+  if [ -n "${SELF_UPDATE_URL}" ]; then
+    printf '%s\n' "${SELF_UPDATE_URL}" >"$SELF_URL_FILE"
+  fi
+}
+
+firewall_open() {
+  local tcp_ports udp_ports port
+  tcp_ports=("80" "443" "$VLESS_PORT" "$SS_PORT" "$TROJAN_PORT")
+  udp_ports=("$HY2_PORT" "$SS_PORT" "$TUIC_PORT")
+  if has ufw; then
+    for port in "${tcp_ports[@]}"; do ufw allow "${port}/tcp" >/dev/null 2>&1 || true; done
+    for port in "${udp_ports[@]}"; do ufw allow "${port}/udp" >/dev/null 2>&1 || true; done
+  elif has firewall-cmd && firewall-cmd --state >/dev/null 2>&1; then
+    for port in "${tcp_ports[@]}"; do firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 || true; done
+    for port in "${udp_ports[@]}"; do firewall-cmd --permanent --add-port="${port}/udp" >/dev/null 2>&1 || true; done
+    firewall-cmd --reload >/dev/null 2>&1 || true
+  else
+    warn "No supported local firewall manager was detected. Open these ports in your provider firewall: 80/tcp, 443/tcp, ${HY2_PORT}/udp, ${SS_PORT}/tcp+udp, ${TUIC_PORT}/udp, ${VLESS_PORT}/tcp, ${TROJAN_PORT}/tcp."
+  fi
+}
+
+xray_api_json() {
+  download_text "https://api.github.com/repos/XTLS/Xray-core/releases/latest"
+}
+
+xray_latest_version() {
+  local api
+  api="$(xray_api_json)"
+  printf '%s\n' "$api" | sed -nE 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/p' | tail -n1
+}
+
+xray_arch_name() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf '64\n' ;;
+    i386|i686) printf '32\n' ;;
+    aarch64|arm64) printf 'arm64-v8a\n' ;;
+    armv7l|armv7|armhf) printf 'arm32-v7a\n' ;;
+    armv6l) printf 'arm32-v6\n' ;;
+    *) fail "Unsupported CPU architecture for Xray: $(uname -m)" ;;
+  esac
+}
+
+xray_download_url() {
+  local arch="$1" api
+  api="$(xray_api_json)"
+  printf '%s\n' "$api" | grep -Eo "https://[^\"]+/Xray-linux-${arch}\.zip" | head -n1
+}
+
+install_xray() {
+  local arch url version cache_dir tmp_dir zip_file bin
+  arch="$(xray_arch_name)"
+  url="$(xray_download_url "$arch")"
+  version="$(xray_latest_version)"
+  [ -n "$url" ] || fail "Unable to get the Xray download URL."
+  ensure_dirs
+  cache_dir="${APP_HOME}/downloads"
+  mkdir -p "$cache_dir"
+  tmp_dir="$(mktemp -d "${cache_dir}/xray.XXXXXX")"
+  zip_file="${tmp_dir}/xray.zip"
+  info "Downloading Xray ${version} ..."
+  if ! curl -fL --retry 3 --connect-timeout 15 "$url" -o "$zip_file"; then
+    warn "curl download failed, trying wget ..."
+    wget -O "$zip_file" "$url" || fail "Failed to download Xray. Check disk space, GitHub connectivity, and write permission for ${cache_dir}."
+  fi
+  [ -s "$zip_file" ] || fail "The downloaded Xray archive is empty."
+  unzip -q "$zip_file" -d "$tmp_dir"
+  bin="$(find "$tmp_dir" -type f -name xray -print -quit)"
+  [ -n "$bin" ] || fail "Xray binary was not found after extraction."
+  install -m 0755 "$bin" /usr/local/bin/xray
+  printf '%s\n' "$version" >"$XRAY_VERSION_FILE"
+  rm -rf "$tmp_dir"
+}
+
+issue_cert() {
+  local acme_domain_dir
+  acme_domain_dir="${ACME_HOME}/${DOMAIN}_ecc"
+
+  install_cert_files() {
+    "$ACME_SH" --install-cert -d "$DOMAIN" --ecc \
+      --key-file "${CERT_DIR}/privkey.pem" \
+      --fullchain-file "${CERT_DIR}/fullchain.pem" \
+      --reloadcmd "systemctl reload nginx >/dev/null 2>&1 || true; systemctl restart sing-box >/dev/null 2>&1 || true; systemctl restart xray >/dev/null 2>&1 || true"
+  }
+
+  if [ -d "$acme_domain_dir" ]; then
+    info "Existing ACME material was detected for ${DOMAIN}. Reusing the current certificate first..."
+    if install_cert_files; then
+      chmod 600 "${CERT_DIR}/privkey.pem"
+      chmod 644 "${CERT_DIR}/fullchain.pem"
+      return 0
+    fi
+    warn "Existing ACME material could not be installed cleanly. Forcing certificate renewal..."
+    if ! "$ACME_SH" --renew -d "$DOMAIN" --ecc --force; then
+      warn "Forced renewal failed. Trying a forced re-issue..."
+      "$ACME_SH" --issue -d "$DOMAIN" --webroot "$APP_WWW" --server letsencrypt --keylength ec-256 --force
+    fi
+  else
+    info "Issuing Let's Encrypt ECC certificate..."
+    "$ACME_SH" --issue -d "$DOMAIN" --webroot "$APP_WWW" --server letsencrypt --keylength ec-256
+  fi
+
+  install_cert_files
+  chmod 600 "${CERT_DIR}/privkey.pem"
+  chmod 644 "${CERT_DIR}/fullchain.pem"
+}
+
+renew_cert() {
+  load_state
+  detect_os
+  [ -n "${DOMAIN:-}" ] || fail "No installed configuration was found."
+  [ -x "$ACME_SH" ] || fail "acme.sh was not found."
+  info "Running certificate renewal..."
+  "$ACME_SH" --renew -d "$DOMAIN" --ecc --force
+  systemctl reload nginx || true
+  systemctl restart sing-box || true
+  systemctl restart xray || true
+  write_client_info
+}
+
+ss_key_length() {
+  case "$SS_METHOD" in
+    2022-blake3-aes-128-gcm) printf '16\n' ;;
+    2022-blake3-aes-256-gcm|2022-blake3-chacha20-poly1305) printf '32\n' ;;
+    *) printf '0\n' ;;
+  esac
+}
+
+ss_generate_password() {
+  local key_len
+  key_len="$(ss_key_length)"
+  if [ "$key_len" -gt 0 ]; then
+    if [ -x /usr/local/bin/sing-box ]; then
+      /usr/local/bin/sing-box generate rand --base64 "$key_len"
+    else
+      openssl rand -base64 "$key_len" | tr -d '\n'
+    fi
+  else
+    rand_alnum 24
+  fi
+}
+
+gen_secrets() {
+  if [ "${CTL_RESET_SECRETS:-0}" = "1" ]; then
+    HY2_PASSWORD=""
+    HY2_OBFS_PASSWORD=""
+    VLESS_UUID=""
+    REALITY_PRIVATE_KEY=""
+    REALITY_PUBLIC_KEY=""
+    REALITY_SHORT_ID=""
+    SS_PASSWORD=""
+    TUIC_UUID=""
+    TUIC_PASSWORD=""
+    TROJAN_PASSWORD=""
+    SUB_TOKEN=""
+    SUB_PATH=""
+  fi
+  HY2_PASSWORD="${HY2_PASSWORD:-$(rand_alnum 28)}"
+  HY2_OBFS_PASSWORD="${HY2_OBFS_PASSWORD:-$(rand_alnum 20)}"
+  VLESS_UUID="${VLESS_UUID:-$(uuid_new)}"
+  SS_PASSWORD="${SS_PASSWORD:-$(ss_generate_password)}"
+  TUIC_UUID="${TUIC_UUID:-$(uuid_new)}"
+  TUIC_PASSWORD="${TUIC_PASSWORD:-$(rand_alnum 24)}"
+  TROJAN_PASSWORD="${TROJAN_PASSWORD:-$(rand_alnum 28)}"
+  REALITY_SHORT_ID="${REALITY_SHORT_ID:-$(openssl rand -hex 8)}"
+  SUB_TOKEN="${SUB_TOKEN:-$(openssl rand -hex 16)}"
+  SUB_PATH="${SUB_PATH:-sub/${SUB_TOKEN}}"
+  if [ -z "${REALITY_PRIVATE_KEY}" ] || [ -z "${REALITY_PUBLIC_KEY}" ]; then
+    reality_keypair
+  fi
+}
+
+write_sing_service() {
+  cat >"$SING_SERVICE" <<EOF
+[Unit]
+Description=sing-box service for ctl
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sing-box run -c ${SING_CONFIG}
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+write_xray_service() {
+  mkdir -p "$XRAY_DIR"
+  cat >"$XRAY_SERVICE" <<EOF
+[Unit]
+Description=Xray Reality service for ctl
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/xray run -config ${XRAY_CONFIG}
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+write_service() {
+  write_sing_service
+  write_xray_service
+  systemctl daemon-reload
+}
+
+write_config() {
+  cat >"$SING_CONFIG" <<EOF
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "hy2-in",
+      "listen": "0.0.0.0",
+      "listen_port": ${HY2_PORT},
+      "users": [
+        {
+          "name": "ctl-hy2",
+          "password": "${HY2_PASSWORD}"
+        }
+      ],
+      "ignore_client_bandwidth": true,
+      "obfs": {
+        "type": "${HY2_OBFS_TYPE}",
+        "password": "${HY2_OBFS_PASSWORD}"
+      },
+      "tls": {
+        "enabled": true,
+        "alpn": ["h3"],
+        "certificate_path": "${CERT_DIR}/fullchain.pem",
+        "key_path": "${CERT_DIR}/privkey.pem"
+      }
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "ss-in",
+      "listen": "0.0.0.0",
+      "listen_port": ${SS_PORT},
+      "method": "${SS_METHOD}",
+      "password": "${SS_PASSWORD}"
+    },
+    {
+      "type": "tuic",
+      "tag": "tuic-in",
+      "listen": "0.0.0.0",
+      "listen_port": ${TUIC_PORT},
+      "users": [
+        {
+          "name": "ctl-tuic",
+          "uuid": "${TUIC_UUID}",
+          "password": "${TUIC_PASSWORD}"
+        }
+      ],
+      "congestion_control": "bbr",
+      "tls": {
+        "enabled": true,
+        "alpn": ["h3"],
+        "certificate_path": "${CERT_DIR}/fullchain.pem",
+        "key_path": "${CERT_DIR}/privkey.pem"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "final": "direct"
+  }
+}
+EOF
+}
+
+write_xray_config() {
+  mkdir -p "$XRAY_DIR"
+  cat >"$XRAY_CONFIG" <<EOF
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "listen": "0.0.0.0",
+      "port": ${VLESS_PORT},
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "${VLESS_UUID}",
+            "email": "ctl-vless-xhttp"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "${REALITY_SERVER}:${REALITY_SERVER_PORT}",
+          "xver": 0,
+          "serverNames": [
+            "${REALITY_SERVER}"
+          ],
+          "privateKey": "${REALITY_PRIVATE_KEY}",
+          "shortIds": [
+            "${REALITY_SHORT_ID}"
+          ]
+        },
+        "xhttpSettings": {
+          "host": "${DOMAIN}",
+          "path": "${XHTTP_PATH}",
+          "mode": "auto"
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    },
+    {
+      "listen": "0.0.0.0",
+      "port": ${TROJAN_PORT},
+      "protocol": "trojan",
+      "settings": {
+        "clients": [
+          {
+            "password": "${TROJAN_PASSWORD}",
+            "email": "ctl-trojan-reality"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "${REALITY_SERVER}:${REALITY_SERVER_PORT}",
+          "xver": 0,
+          "serverNames": [
+            "${REALITY_SERVER}"
+          ],
+          "privateKey": "${REALITY_PRIVATE_KEY}",
+          "shortIds": [
+            "${REALITY_SHORT_ID}"
+          ]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    },
+    {
+      "protocol": "blackhole",
+      "tag": "block"
+    }
+  ]
+}
+EOF
+}
+
+check_config() {
+  /usr/local/bin/sing-box check -c "$SING_CONFIG" >/dev/null
+  /usr/local/bin/xray run -test -config "$XRAY_CONFIG" >/dev/null
+}
+
+start_sing() {
+  write_service
+  check_config
+  systemctl enable --now sing-box
+  systemctl restart sing-box
+  systemctl enable --now xray
+  systemctl restart xray
+}
+
+base64_urlsafe_no_pad() {
+  base64 | tr -d '\n=' | tr '/+' '_-'
+}
+
+ss_uri() {
+  local encoded
+  encoded="$(printf '%s:%s' "$SS_METHOD" "$SS_PASSWORD" | base64_urlsafe_no_pad)"
+  printf 'ss://%s@%s:%s#CTL-Shadowsocks-2022\n' "$encoded" "$DOMAIN" "$SS_PORT"
+}
+
+hy2_uri() {
+  printf 'hysteria2://%s@%s:%s/?sni=%s&insecure=0&obfs=%s&obfs-password=%s#CTL-Hysteria2\n' \
+    "$HY2_PASSWORD" "$DOMAIN" "$HY2_PORT" "$DOMAIN" "$HY2_OBFS_TYPE" "$HY2_OBFS_PASSWORD"
+}
+
+tuic_uri() {
+  printf 'tuic://%s:%s@%s:%s?congestion_control=bbr&sni=%s&alpn=h3#CTL-TUIC-v5\n' \
+    "$TUIC_UUID" "$TUIC_PASSWORD" "$DOMAIN" "$TUIC_PORT" "$DOMAIN"
+}
+
+vless_xhttp_reality_uri() {
+  local encoded_path
+  encoded_path="${XHTTP_PATH//\//%2F}"
+  printf 'vless://%s@%s:%s?encryption=none&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=xhttp&host=%s&path=%s&mode=auto#CTL-VLESS-XHTTP-Reality\n' \
+    "$VLESS_UUID" "$DOMAIN" "$VLESS_PORT" "$REALITY_SERVER" "$REALITY_PUBLIC_KEY" "$REALITY_SHORT_ID" "$DOMAIN" "$encoded_path"
+}
+
+trojan_reality_uri() {
+  printf 'trojan://%s@%s:%s?security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp#CTL-Trojan-Reality\n' \
+    "$TROJAN_PASSWORD" "$DOMAIN" "$TROJAN_PORT" "$REALITY_SERVER" "$REALITY_PUBLIC_KEY" "$REALITY_SHORT_ID"
+}
+
+build_full_link_lines() {
+  cat <<EOF
+$(hy2_uri)
+$(tuic_uri)
+$(ss_uri)
+$(vless_xhttp_reality_uri)
+$(trojan_reality_uri)
+EOF
+}
+
+build_safe_link_lines() {
+  cat <<EOF
+$(hy2_uri)
+$(tuic_uri)
+$(ss_uri)
+$(trojan_reality_uri)
+EOF
+}
+
+write_mihomo_yaml() {
+  local clash_file="$1"
+  cat >"$clash_file" <<EOF
+mixed-port: 7890
+allow-lan: true
+mode: rule
+log-level: info
+ipv6: true
+unified-delay: true
+tcp-concurrent: true
+
+dns:
+  enable: true
+  ipv6: true
+  respect-rules: true
+  proxy-server-nameserver:
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
+  nameserver:
+    - https://cloudflare-dns.com/dns-query
+    - https://dns.google/dns-query
+
+proxies:
+  - name: "CTL-Hysteria2"
+    type: hysteria2
+    server: ${DOMAIN}
+    port: ${HY2_PORT}
+    password: "${HY2_PASSWORD}"
+    obfs: ${HY2_OBFS_TYPE}
+    obfs-password: "${HY2_OBFS_PASSWORD}"
+    sni: ${DOMAIN}
+    skip-cert-verify: false
+    alpn:
+      - h3
+
+  - name: "CTL-TUIC-v5"
+    type: tuic
+    server: ${DOMAIN}
+    port: ${TUIC_PORT}
+    uuid: ${TUIC_UUID}
+    password: "${TUIC_PASSWORD}"
+    udp: true
+    sni: ${DOMAIN}
+    skip-cert-verify: false
+    alpn:
+      - h3
+    congestion-controller: bbr
+
+  - name: "CTL-Shadowsocks-2022"
+    type: ss
+    server: ${DOMAIN}
+    port: ${SS_PORT}
+    cipher: ${SS_METHOD}
+    password: "${SS_PASSWORD}"
+    udp: true
+
+  - name: "CTL-VLESS-XHTTP-Reality"
+    type: vless
+    server: ${DOMAIN}
+    port: ${VLESS_PORT}
+    udp: true
+    uuid: ${VLESS_UUID}
+    tls: true
+    servername: ${REALITY_SERVER}
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: ${REALITY_PUBLIC_KEY}
+      short-id: ${REALITY_SHORT_ID}
+    network: xhttp
+    xhttp-opts:
+      path: ${XHTTP_PATH}
+      host: ${DOMAIN}
+
+  - name: "CTL-Trojan-Reality"
+    type: trojan
+    server: ${DOMAIN}
+    port: ${TROJAN_PORT}
+    password: "${TROJAN_PASSWORD}"
+    udp: true
+    sni: ${REALITY_SERVER}
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: ${REALITY_PUBLIC_KEY}
+      short-id: ${REALITY_SHORT_ID}
+    network: tcp
+
+proxy-groups:
+  - name: "CTL-Select"
+    type: select
+    proxies:
+      - "CTL-Auto"
+      - "CTL-VLESS-XHTTP-Reality"
+      - "CTL-Trojan-Reality"
+      - "CTL-Hysteria2"
+      - "CTL-TUIC-v5"
+      - "CTL-Shadowsocks-2022"
+      - DIRECT
+
+  - name: "CTL-Auto"
+    type: url-test
+    url: "http://www.gstatic.com/generate_204"
+    interval: 300
+    proxies:
+      - "CTL-VLESS-XHTTP-Reality"
+      - "CTL-Trojan-Reality"
+      - "CTL-Hysteria2"
+      - "CTL-TUIC-v5"
+      - "CTL-Shadowsocks-2022"
+
+  - name: "CTL-AI"
+    type: select
+    proxies:
+      - "CTL-Auto"
+      - "CTL-VLESS-XHTTP-Reality"
+      - "CTL-Trojan-Reality"
+      - "CTL-Hysteria2"
+      - "CTL-TUIC-v5"
+      - "CTL-Shadowsocks-2022"
+
+  - name: "CTL-Streaming"
+    type: select
+    proxies:
+      - "CTL-Auto"
+      - "CTL-VLESS-XHTTP-Reality"
+      - "CTL-Trojan-Reality"
+      - "CTL-Hysteria2"
+      - "CTL-TUIC-v5"
+      - "CTL-Shadowsocks-2022"
+
+  - name: "CTL-Social"
+    type: select
+    proxies:
+      - "CTL-Auto"
+      - "CTL-VLESS-XHTTP-Reality"
+      - "CTL-Trojan-Reality"
+      - "CTL-Hysteria2"
+      - "CTL-TUIC-v5"
+      - "CTL-Shadowsocks-2022"
+
+rules:
+  - DOMAIN-SUFFIX,openai.com,CTL-AI
+  - DOMAIN-SUFFIX,chatgpt.com,CTL-AI
+  - DOMAIN-SUFFIX,oaistatic.com,CTL-AI
+  - DOMAIN-SUFFIX,oaiusercontent.com,CTL-AI
+  - DOMAIN-SUFFIX,auth0.openai.com,CTL-AI
+  - DOMAIN-SUFFIX,anthropic.com,CTL-AI
+  - DOMAIN-SUFFIX,claude.ai,CTL-AI
+  - DOMAIN,gemini.google.com,CTL-AI
+  - DOMAIN-SUFFIX,perplexity.ai,CTL-AI
+  - DOMAIN-SUFFIX,poe.com,CTL-AI
+  - DOMAIN-SUFFIX,x.ai,CTL-AI
+  - DOMAIN-SUFFIX,grok.com,CTL-AI
+  - DOMAIN-SUFFIX,meta.ai,CTL-AI
+  - DOMAIN-SUFFIX,copilot.microsoft.com,CTL-AI
+  - DOMAIN-SUFFIX,netflix.com,CTL-Streaming
+  - DOMAIN-SUFFIX,nflxext.com,CTL-Streaming
+  - DOMAIN-SUFFIX,nflximg.net,CTL-Streaming
+  - DOMAIN-SUFFIX,nflxso.net,CTL-Streaming
+  - DOMAIN-SUFFIX,nflxvideo.net,CTL-Streaming
+  - DOMAIN-SUFFIX,tiktok.com,CTL-Social
+  - DOMAIN-SUFFIX,tiktokv.com,CTL-Social
+  - DOMAIN-SUFFIX,byteoversea.com,CTL-Social
+  - DOMAIN-SUFFIX,ibytedtos.com,CTL-Social
+  - DOMAIN-SUFFIX,facebook.com,CTL-Social
+  - DOMAIN-SUFFIX,fbcdn.net,CTL-Social
+  - DOMAIN-SUFFIX,instagram.com,CTL-Social
+  - DOMAIN-SUFFIX,cdninstagram.com,CTL-Social
+  - DOMAIN-SUFFIX,whatsapp.com,CTL-Social
+  - DOMAIN-SUFFIX,whatsapp.net,CTL-Social
+  - DOMAIN-SUFFIX,x.com,CTL-Social
+  - DOMAIN-SUFFIX,twitter.com,CTL-Social
+  - DOMAIN-SUFFIX,twimg.com,CTL-Social
+  - GEOIP,CN,DIRECT
+  - MATCH,CTL-Select
+EOF
+}
+
+nginx_https() {
+  mkdir -p "${APP_WWW}/${SUB_PATH}"
+  cat >"$NGINX_CONF" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+    root ${APP_WWW};
+
+    location /.well-known/acme-challenge/ {
+        try_files \$uri =404;
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name ${DOMAIN};
+    root ${APP_WWW};
+
+    ssl_certificate ${CERT_DIR}/fullchain.pem;
+    ssl_certificate_key ${CERT_DIR}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    add_header Cache-Control "no-store";
+
+    location /.well-known/acme-challenge/ {
+        try_files \$uri =404;
+    }
+
+    location = /${SUB_PATH}/universal {
+        if (\$arg_client = clash) { return 302 https://\$host/${SUB_PATH}/clash.yaml; }
+        if (\$arg_client = clash-party) { return 302 https://\$host/${SUB_PATH}/clash.yaml; }
+        if (\$arg_client = mihomo) { return 302 https://\$host/${SUB_PATH}/clash.yaml; }
+        if (\$arg_client = v2rayn) { return 302 https://\$host/${SUB_PATH}/v2rayn.txt; }
+        if (\$arg_client = shadowrocket) { return 302 https://\$host/${SUB_PATH}/shadowrocket.txt; }
+        if (\$arg_client = karing) { return 302 https://\$host/${SUB_PATH}/karing.txt; }
+        if (\$arg_client = raw) { return 302 https://\$host/${SUB_PATH}/raw.txt; }
+        if (\$arg_client = meta) { return 302 https://\$host/${SUB_PATH}/sub.json; }
+
+        if (\$arg_format = clash) { return 302 https://\$host/${SUB_PATH}/clash.yaml; }
+        if (\$arg_format = v2ray) { return 302 https://\$host/${SUB_PATH}/sub.txt; }
+        if (\$arg_format = raw) { return 302 https://\$host/${SUB_PATH}/raw.txt; }
+        if (\$arg_format = json) { return 302 https://\$host/${SUB_PATH}/sub.json; }
+
+        if (\$http_user_agent ~* "(clash|mihomo|clash-party|clashparty)") { return 302 https://\$host/${SUB_PATH}/clash.yaml; }
+        if (\$http_user_agent ~* "(v2rayn)") { return 302 https://\$host/${SUB_PATH}/v2rayn.txt; }
+        if (\$http_user_agent ~* "(shadowrocket)") { return 302 https://\$host/${SUB_PATH}/shadowrocket.txt; }
+        if (\$http_user_agent ~* "(karing)") { return 302 https://\$host/${SUB_PATH}/karing.txt; }
+
+        return 302 https://\$host/${SUB_PATH}/index.html;
+    }
+
+    location / {
+        try_files \$uri \$uri/ /index.html =404;
+    }
+}
+EOF
+  nginx -t
+  systemctl reload nginx
+}
+
+write_sub_files() {
+  local raw_file sub_file html_file clash_file v2rayn_file shadowrocket_file karing_file sub_json_file
+  local raw_content full_content safe_content universal_url
+  mkdir -p "${APP_WWW}/${SUB_PATH}"
+  raw_file="${APP_WWW}/${SUB_PATH}/raw.txt"
+  sub_file="${APP_WWW}/${SUB_PATH}/sub.txt"
+  html_file="${APP_WWW}/${SUB_PATH}/index.html"
+  clash_file="${APP_WWW}/${SUB_PATH}/clash.yaml"
+  v2rayn_file="${APP_WWW}/${SUB_PATH}/v2rayn.txt"
+  shadowrocket_file="${APP_WWW}/${SUB_PATH}/shadowrocket.txt"
+  karing_file="${APP_WWW}/${SUB_PATH}/karing.txt"
+  sub_json_file="${APP_WWW}/${SUB_PATH}/sub.json"
+  universal_url="https://${DOMAIN}/${SUB_PATH}/universal"
+
+  full_content="$(build_full_link_lines)"
+  safe_content="$(build_safe_link_lines)"
+
+  printf '%s\n' "$full_content" >"$raw_file"
+  printf '%s\n' "$full_content" >"$v2rayn_file"
+  printf '%s\n' "$safe_content" >"$shadowrocket_file"
+  printf '%s\n' "$safe_content" >"$karing_file"
+  printf '%s\n' "$safe_content" >"$sub_file"
+
+  write_mihomo_yaml "$clash_file"
+
+  raw_content="$(cat "$sub_file")"
+  printf '%s' "$raw_content" | base64_one_line >"$sub_file.b64"
+  mv "$sub_file.b64" "$sub_file"
+
+  cat >"$sub_json_file" <<EOF
+{
+  "name": "CTL Universal Subscription",
+  "domain": "${DOMAIN}",
+  "universal_url": "${universal_url}",
+  "profiles": {
+    "mihomo": {
+      "url": "https://${DOMAIN}/${SUB_PATH}/clash.yaml",
+      "protocols": ["hy2", "tuic-v5", "ss-2022-blake3", "vless-xhttp-reality", "trojan-reality"]
+    },
+    "v2rayn": {
+      "url": "https://${DOMAIN}/${SUB_PATH}/v2rayn.txt",
+      "protocols": ["hy2", "tuic-v5", "ss-2022-blake3", "vless-xhttp-reality", "trojan-reality"]
+    },
+    "shadowrocket": {
+      "url": "https://${DOMAIN}/${SUB_PATH}/shadowrocket.txt",
+      "protocols": ["hy2", "tuic-v5", "ss-2022-blake3", "trojan-reality"]
+    },
+    "karing": {
+      "url": "https://${DOMAIN}/${SUB_PATH}/karing.txt",
+      "protocols": ["hy2", "tuic-v5", "ss-2022-blake3", "trojan-reality"]
+    },
+    "generic": {
+      "url": "https://${DOMAIN}/${SUB_PATH}/sub.txt",
+      "encoding": "base64",
+      "protocols": ["hy2", "tuic-v5", "ss-2022-blake3", "trojan-reality"]
+    },
+    "raw": {
+      "url": "https://${DOMAIN}/${SUB_PATH}/raw.txt",
+      "protocols": ["hy2", "tuic-v5", "ss-2022-blake3", "vless-xhttp-reality", "trojan-reality"]
+    }
+  }
+}
+EOF
+
+  cat >"$html_file" <<EOF
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CTL Subscription</title>
+  <style>
+    body { margin: 0; font-family: "Segoe UI","Helvetica Neue",Arial,sans-serif; background: linear-gradient(135deg,#f5f7fb,#edf6ff); color: #10243f; }
+    main { max-width: 860px; margin: 0 auto; padding: 48px 20px 64px; }
+    .card { background: rgba(255,255,255,.92); border: 1px solid rgba(16,36,63,.08); border-radius: 20px; padding: 22px; box-shadow: 0 12px 40px rgba(16,36,63,.08); margin-top: 18px; }
+    a { color: #0a67d0; text-decoration: none; word-break: break-all; }
+    code { display: inline-block; padding: 2px 8px; border-radius: 8px; background: #eff5ff; }
+    ul { margin: 12px 0 0; padding-left: 20px; }
+    li { margin: 8px 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>CTL Subscription Hub</h1>
+    <div class="card">
+      <p>Universal smart entry: <a href="${universal_url}">${universal_url}</a></p>
+      <ul>
+        <li>Mihomo / Clash Party: <a href="/${SUB_PATH}/clash.yaml">https://${DOMAIN}/${SUB_PATH}/clash.yaml</a></li>
+        <li>v2rayN: <a href="/${SUB_PATH}/v2rayn.txt">https://${DOMAIN}/${SUB_PATH}/v2rayn.txt</a></li>
+        <li>Shadowrocket: <a href="/${SUB_PATH}/shadowrocket.txt">https://${DOMAIN}/${SUB_PATH}/shadowrocket.txt</a></li>
+        <li>Karing: <a href="/${SUB_PATH}/karing.txt">https://${DOMAIN}/${SUB_PATH}/karing.txt</a></li>
+        <li>Generic safe feed: <a href="/${SUB_PATH}/sub.txt">https://${DOMAIN}/${SUB_PATH}/sub.txt</a></li>
+        <li>Raw all-node links: <a href="/${SUB_PATH}/raw.txt">https://${DOMAIN}/${SUB_PATH}/raw.txt</a></li>
+        <li>Subscription metadata: <a href="/${SUB_PATH}/sub.json">https://${DOMAIN}/${SUB_PATH}/sub.json</a></li>
+        <li>Plain-text node info: <a href="/${SUB_PATH}/client-info.txt">https://${DOMAIN}/${SUB_PATH}/client-info.txt</a></li>
+      </ul>
+    </div>
+    <div class="card">
+      <p>Client filtering:</p>
+      <ul>
+        <li><code>clash.yaml</code> keeps all five protocols: Hysteria2, TUIC v5, Shadowsocks 2022 Blake3, VLESS XHTTP Reality, and Trojan Reality.</li>
+        <li><code>v2rayn.txt</code> keeps all five protocols for the latest v2rayN line.</li>
+        <li><code>shadowrocket.txt</code>, <code>karing.txt</code>, and the generic <code>sub.txt</code> exclude <code>VLESS XHTTP Reality</code> on purpose because support still varies across clients.</li>
+        <li>Use <code>raw.txt</code> if you want the full set and prefer manual import.</li>
+        <li>Run <code>ctl site-check</code> on the server if Netflix, TikTok, ChatGPT, Claude, Gemini, Facebook, or X does not open.</li>
+      </ul>
+    </div>
+  </main>
+</body>
+</html>
+EOF
+}
+
+write_client_info() {
+  local raw_url sub_url clash_url universal_url v2rayn_url shadowrocket_url karing_url sub_json_url info_url cert_expire sing_ver xray_ver
+  raw_url="https://${DOMAIN}/${SUB_PATH}/raw.txt"
+  sub_url="https://${DOMAIN}/${SUB_PATH}/sub.txt"
+  clash_url="https://${DOMAIN}/${SUB_PATH}/clash.yaml"
+  universal_url="https://${DOMAIN}/${SUB_PATH}/universal"
+  v2rayn_url="https://${DOMAIN}/${SUB_PATH}/v2rayn.txt"
+  shadowrocket_url="https://${DOMAIN}/${SUB_PATH}/shadowrocket.txt"
+  karing_url="https://${DOMAIN}/${SUB_PATH}/karing.txt"
+  sub_json_url="https://${DOMAIN}/${SUB_PATH}/sub.json"
+  info_url="https://${DOMAIN}/${SUB_PATH}/client-info.txt"
+  cert_expire="unknown"
+  sing_ver="$(/usr/local/bin/sing-box version 2>/dev/null | head -n1 || true)"
+  xray_ver="$(/usr/local/bin/xray version 2>/dev/null | head -n1 || true)"
+  if [ -f "${CERT_DIR}/fullchain.pem" ]; then
+    cert_expire="$(openssl x509 -in "${CERT_DIR}/fullchain.pem" -noout -enddate 2>/dev/null | sed 's/notAfter=//')"
+  fi
+  cat >"$CLIENT_INFO" <<EOF
+CTL Deployment Information
+==========================
+System: ${OS_NAME}
+Domain: ${DOMAIN}
+Panel command: ctl
+sing-box: ${sing_ver}
+Xray: ${xray_ver}
+Certificate expiry: ${cert_expire}
+
+Universal smart entry: ${universal_url}
+Mihomo / Clash Party: ${clash_url}
+v2rayN: ${v2rayn_url}
+Shadowrocket: ${shadowrocket_url}
+Karing: ${karing_url}
+Generic safe feed: ${sub_url}
+Raw links: ${raw_url}
+Subscription metadata: ${sub_json_url}
+Plain-text info: ${info_url}
+
+Client routing policy
+---------------------
+Mihomo / Clash Party: all five protocols
+v2rayN: all five protocols
+Shadowrocket: HY2, TUIC v5, Shadowsocks 2022 Blake3, Trojan Reality
+Karing: HY2, TUIC v5, Shadowsocks 2022 Blake3, Trojan Reality
+Generic safe feed: HY2, TUIC v5, Shadowsocks 2022 Blake3, Trojan Reality
+
+Compatibility note
+------------------
+VLESS + XHTTP + Reality is intentionally excluded from Shadowrocket, Karing, and the generic safe feed to avoid import failures on clients that still lag behind the latest XHTTP handling.
+Use Mihomo or the latest v2rayN for the full five-protocol profile, or use raw.txt for manual import.
+
+Service reachability notes
+--------------------------
+Protocol selection does not unlock services by itself. Netflix, TikTok, ChatGPT, Claude, Gemini, Facebook, X, and similar platforms care mostly about the VPS egress IP, ASN, region, and reputation.
+For login-heavy sites, try this order first: VLESS XHTTP Reality, Trojan Reality, then Hysteria2 or TUIC.
+Run this on the server when a site fails:
+  ctl site-check
+
+Hysteria2
+  host: ${DOMAIN}
+  port: ${HY2_PORT}
+  auth: ${HY2_PASSWORD}
+  sni: ${DOMAIN}
+  obfs: ${HY2_OBFS_TYPE}
+  obfs-password: ${HY2_OBFS_PASSWORD}
+  uri: $(hy2_uri)
+
+TUIC v5
+  host: ${DOMAIN}
+  port: ${TUIC_PORT}
+  uuid: ${TUIC_UUID}
+  password: ${TUIC_PASSWORD}
+  sni: ${DOMAIN}
+  uri: $(tuic_uri)
+
+Shadowsocks 2022 Blake3
+  host: ${DOMAIN}
+  port: ${SS_PORT}
+  method: ${SS_METHOD}
+  password: ${SS_PASSWORD}
+  uri: $(ss_uri)
+
+VLESS + XHTTP + Reality
+  host: ${DOMAIN}
+  port: ${VLESS_PORT}
+  uuid: ${VLESS_UUID}
+  sni: ${REALITY_SERVER}
+  public-key: ${REALITY_PUBLIC_KEY}
+  short-id: ${REALITY_SHORT_ID}
+  path: ${XHTTP_PATH}
+  uri: $(vless_xhttp_reality_uri)
+
+Trojan + Reality
+  host: ${DOMAIN}
+  port: ${TROJAN_PORT}
+  password: ${TROJAN_PASSWORD}
+  sni: ${REALITY_SERVER}
+  public-key: ${REALITY_PUBLIC_KEY}
+  short-id: ${REALITY_SHORT_ID}
+  uri: $(trojan_reality_uri)
+EOF
+  cp "$CLIENT_INFO" "${APP_WWW}/${SUB_PATH}/client-info.txt"
+  cat >"$META_INFO" <<EOF
+{
+  "domain": "${DOMAIN}",
+  "subscription_universal": "${universal_url}",
+  "subscription_clash": "${clash_url}",
+  "subscription_v2rayn": "${v2rayn_url}",
+  "subscription_shadowrocket": "${shadowrocket_url}",
+  "subscription_karing": "${karing_url}",
+  "subscription_base64": "${sub_url}",
+  "subscription_raw": "${raw_url}",
+  "subscription_json": "${sub_json_url}",
+  "client_info": "${info_url}"
+}
+EOF
+}
+
+show_sub() {
+  load_state
+  [ -n "${DOMAIN:-}" ] || fail "No installed configuration was found."
+  printf 'Universal smart entry: https://%s/%s/universal\n' "$DOMAIN" "$SUB_PATH"
+  printf 'Mihomo / Clash Party: https://%s/%s/clash.yaml\n' "$DOMAIN" "$SUB_PATH"
+  printf 'v2rayN: https://%s/%s/v2rayn.txt\n' "$DOMAIN" "$SUB_PATH"
+  printf 'Shadowrocket: https://%s/%s/shadowrocket.txt\n' "$DOMAIN" "$SUB_PATH"
+  printf 'Karing: https://%s/%s/karing.txt\n' "$DOMAIN" "$SUB_PATH"
+  printf 'Generic safe feed: https://%s/%s/sub.txt\n' "$DOMAIN" "$SUB_PATH"
+  printf 'Raw links: https://%s/%s/raw.txt\n' "$DOMAIN" "$SUB_PATH"
+  printf 'Subscription metadata: https://%s/%s/sub.json\n' "$DOMAIN" "$SUB_PATH"
+  printf 'Plain-text info: https://%s/%s/client-info.txt\n' "$DOMAIN" "$SUB_PATH"
+}
+
+update_core() {
+  local sing_current sing_latest xray_current xray_latest changed=0 xray_norm
+  load_state
+  detect_os
+  sing_current="$(/usr/local/bin/sing-box version 2>/dev/null | head -n1 || true)"
+  sing_latest="$(sing_latest_version)"
+  if ! printf '%s\n' "$sing_current" | grep -q "$sing_latest"; then
+    install_sing_box
+    changed=1
+  fi
+
+  xray_current="$(/usr/local/bin/xray version 2>/dev/null | head -n1 || true)"
+  xray_latest="$(xray_latest_version)"
+  xray_norm="${xray_latest#v}"
+  if ! printf '%s\n' "$xray_current" | grep -q "$xray_norm"; then
+    install_xray
+    changed=1
+  fi
+
+  if [ "$changed" -eq 0 ]; then
+    info "sing-box and Xray are already up to date."
+    return 0
+  fi
+
+  check_config
+  systemctl restart sing-box
+  systemctl restart xray
+  write_client_info
+  info "Core components were updated."
+}
+
+repair_runtime() {
+  load_state
+  detect_os
+  [ -f "$STATE_FILE" ] || fail "No installed configuration was found."
+  ensure_dirs
+  mkdir -p "$XRAY_DIR"
+  set_defaults
+  save_state
+  write_service
+  write_config
+  write_xray_config
+  check_config
+  write_sub_files
+  write_client_info
+  nginx_https
+  systemctl enable --now sing-box
+  systemctl restart sing-box
+  systemctl enable --now xray
+  systemctl restart xray
+  info "Runtime config, subscriptions, and nginx routing were rebuilt."
+}
+
+update_all() {
+  local rerun="${CTL_SYNC_UPDATE_RERUN:-0}"
+  load_state
+  [ -f "$STATE_FILE" ] || fail "No installed configuration was found."
+  if [ "$rerun" != "1" ]; then
+    update_core
+    if [ -n "${SELF_UPDATE_URL:-}" ] || [ -f "$SELF_URL_FILE" ]; then
+      update_panel
+      if [ -x "$SELF_BIN" ]; then
+        info "Reloading the updated panel to apply the latest runtime templates..."
+        CTL_SYNC_UPDATE_RERUN=1 exec "$SELF_BIN" sync-update
+      fi
+    else
+      warn "No script self-update URL is configured, so only the runtime cores were updated."
+    fi
+  fi
+  repair_runtime
+  if [ -x "$ACME_SH" ]; then
+    "$ACME_SH" --cron --home "$ACME_HOME" >/dev/null 2>&1 || true
+  fi
+  info "Sync update completed. Core, panel, config, subscriptions, and nginx routing were refreshed."
+}
+
+restart_all() {
+  systemctl restart nginx
+  systemctl restart sing-box
+  systemctl restart xray
+  info "nginx, sing-box, and Xray have been restarted."
+}
+
+uninstall_all() {
+  local domain_to_remove legacy_state legacy_domain
+  need_root
+  load_state
+  legacy_state="/etc/kimi/state.env"
+  domain_to_remove="${DOMAIN:-}"
+  if [ -z "$domain_to_remove" ] && [ -f "$legacy_state" ]; then
+    legacy_domain="$(awk -F'"' '/^DOMAIN=/{print $2; exit}' "$legacy_state" 2>/dev/null || true)"
+    domain_to_remove="${legacy_domain:-}"
+  fi
+  if ! confirm "Permanently uninstall CTL and purge managed data?"; then
+    info "Uninstall cancelled."
+    return 0
+  fi
+  systemctl disable --now sing-box >/dev/null 2>&1 || true
+  systemctl disable --now xray >/dev/null 2>&1 || true
+  rm -f "$SING_SERVICE" "$XRAY_SERVICE" "/etc/systemd/system/ctl.service" "/etc/systemd/system/kimi.service"
+  rm -f "$SING_CONFIG" "$XRAY_CONFIG" "$NGINX_CONF" "$SELF_BIN" "$SELF_URL_FILE" "$SYSCTL_CONF"
+  rm -f "/etc/nginx/conf.d/ctl.conf.bak."* "/etc/nginx/conf.d/kimi.conf" "/etc/nginx/conf.d/kimi.conf.bak."*
+  rm -f "/etc/nginx/sites-enabled/ctl.conf" "/etc/nginx/sites-available/ctl.conf"
+  rm -f "/etc/nginx/sites-enabled/kimi.conf" "/etc/nginx/sites-available/kimi.conf"
+  rm -f "/usr/local/bin/kimi" "/usr/local/bin/sing-box" "/usr/local/bin/xray"
+  rm -f "/etc/sysctl.d/98-kimi.conf" "/etc/cron.d/ctl" "/etc/cron.d/kimi"
+  rm -rf "$APP_HOME" "$APP_ETC" "$APP_WWW" "$CERT_DIR" "$SING_DIR" "$XRAY_DIR"
+  rm -rf "/opt/kimi" "/etc/kimi" "/var/www/kimi" "/etc/ssl/kimi"
+  systemctl daemon-reload
+  sysctl --system >/dev/null 2>&1 || true
+  if systemctl is-active nginx >/dev/null 2>&1; then
+    systemctl reload nginx || true
+  fi
+  if [ -n "$domain_to_remove" ] && [ -x "$ACME_SH" ]; then
+    "$ACME_SH" --remove -d "$domain_to_remove" --ecc >/dev/null 2>&1 || true
+    rm -rf "${ACME_HOME}/${domain_to_remove}_ecc"
+  fi
+  info "CTL-managed files, core binaries, certificates, and legacy CTL/Kimi leftovers were removed. nginx and acme.sh packages were left in place to avoid affecting other sites."
+}
+
+install_all() {
+  need_root
+  need_systemd
+  detect_os
+  load_state
+  set_defaults
+  ask DOMAIN "Enter the primary domain pointing to this VPS"
+  ask EMAIL "Enter the certificate email"
+  check_dns_hint
+  install_deps
+  install_self
+  firewall_open
+  install_acme
+  install_sing_box
+  install_xray
+  gen_secrets
+  save_state
+  nginx_http_only
+  issue_cert
+  write_config
+  write_xray_config
+  start_sing
+  write_sub_files
+  nginx_https
+  write_client_info
+  save_state
+  info "Installation completed. Current node information:"
+  show_info
+}
+
+site_check() {
+  local ip
+  load_state
+  [ -f "$STATE_FILE" ] || fail "No installed configuration was found."
+  ip="$(public_ipv4)"
+
+  printf 'CTL site reachability check\n'
+  printf '============================\n'
+  if [ -n "$ip" ]; then
+    printf 'Current VPS IPv4: %s\n' "$ip"
+  fi
+  printf '\n'
+  printf 'AI services\n'
+  printf '-----------\n'
+  probe_generic_site "ChatGPT Web" "https://chatgpt.com/"
+  probe_generic_site "OpenAI API" "https://api.openai.com/v1/models"
+  probe_generic_site "Claude" "https://claude.ai/login"
+  probe_generic_site "Gemini" "https://gemini.google.com/app"
+  probe_generic_site "Perplexity" "https://www.perplexity.ai/"
+  printf '\n'
+  printf 'Streaming / social\n'
+  printf '------------------\n'
+  probe_netflix_site
+  probe_generic_site "TikTok" "https://www.tiktok.com/"
+  probe_generic_site "Facebook" "https://www.facebook.com/"
+  probe_generic_site "X" "https://x.com/"
+  printf '\n'
+  printf 'Notes\n'
+  printf '-----\n'
+  printf '%s\n' "1. This check reflects the VPS egress IP, not a specific protocol."
+  printf '%s\n' "2. If a service fails here, switching between Hysteria2, TUIC, Shadowsocks 2022, VLESS XHTTP Reality, or Trojan Reality usually will not fix it."
+  printf '%s\n' "3. For login-heavy sites, try VLESS XHTTP Reality or Trojan Reality first."
+  printf '%s\n' "4. Netflix, TikTok, ChatGPT, Claude, Gemini, Facebook, and X are strongly affected by IP reputation, ASN type, and region."
+}
+
+usage() {
+  cat <<EOF
+Usage:
+  bash ctl.sh
+  ctl
+  ctl install
+  ctl show
+  ctl sub
+  ctl renew
+  ctl update
+  ctl repair
+  ctl restart
+  ctl uninstall
+  ctl site-check
+  ctl tune-network
+  ctl set-update-url https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
+
+Environment variables:
+  CTL_DOMAIN=your.domain.com
+  CTL_EMAIL=you@example.com
+  CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
+  CTL_XHTTP_PATH=/ctl-xhttp
+  CTL_TROJAN_REALITY_PORT=9443
+  CTL_RESET_SECRETS=1
+
+Notes:
+  1. 443/tcp is reserved for the HTTPS subscription endpoint.
+  2. 443/udp is used by default for Hysteria2.
+  3. The active stack is: Hysteria2, TUIC v5, Shadowsocks 2022 Blake3, VLESS XHTTP Reality, and Trojan Reality.
+  4. Client-specific subscriptions are generated to avoid importing unsupported nodes.
+  5. Use /clash.yaml for Mihomo or Clash Party, /v2rayn.txt for v2rayN, /shadowrocket.txt for Shadowrocket, /karing.txt for Karing, and /universal for smart redirects.
+  6. VLESS XHTTP Reality is intentionally excluded from Shadowrocket, Karing, and the generic safe feed.
+  7. Run ctl site-check if Netflix, TikTok, ChatGPT, Claude, Gemini, Facebook, X, or similar services fail to open.
 EOF
 }
 

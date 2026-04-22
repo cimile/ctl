@@ -1,26 +1,24 @@
 # CTL
 
-`CTL` is a Debian/Ubuntu deployment and management script for a sing-box based multi-protocol server.
+`CTL` is a Debian/Ubuntu deployment and management script for a multi-protocol access stack.
 
 It installs:
 
-- `AnyTLS`
 - `Hysteria2`
-- `VLESS + WS + TLS`
-- `VMess + WS + TLS`
-- `Shadowsocks`
-- `TUIC`
-- `Trojan + WS + TLS`
-- `Trojan + gRPC + TLS`
+- `TUIC v5`
+- `Shadowsocks 2022 Blake3`
+- `VLESS + XHTTP + Reality`
+- `Trojan + Reality`
 
 It also manages:
 
 - `sing-box`
+- `Xray`
 - `nginx`
 - `acme.sh`
 - HTTPS subscription outputs
 - certificate renewal
-- update / restart / uninstall actions
+- update / repair / restart / uninstall actions
 - an interactive menu opened by the `ctl` command
 
 ## Supported OS
@@ -29,8 +27,6 @@ It also manages:
 - `Ubuntu`
 
 ## Quick Start
-
-Run directly from GitHub Raw:
 
 ```bash
 bash <(wget -qO- https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh)
@@ -60,6 +56,7 @@ ctl show
 ctl sub
 ctl renew
 ctl update
+ctl repair
 ctl restart
 ctl uninstall
 ctl site-check
@@ -73,16 +70,14 @@ ctl set-update-url https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
 CTL_DOMAIN=your.domain.com
 CTL_EMAIL=you@example.com
 CTL_SCRIPT_URL=https://raw.githubusercontent.com/cimile/ctl/main/ctl.sh
-CTL_VLESS_WS_PATH=/ctl-vless
-CTL_VMESS_WS_PATH=/ctl-vmess
-CTL_TROJAN_WS_PATH=/ctl-trojan-ws
-CTL_TROJAN_GRPC_SERVICE=ctl-trojan-grpc
+CTL_XHTTP_PATH=/ctl-xhttp
+CTL_TROJAN_REALITY_PORT=9443
 CTL_RESET_SECRETS=1
 ```
 
 ## Generated Subscription Outputs
 
-After installation, `ctl sub` will show:
+After installation, `ctl sub` shows:
 
 - `universal`
 - `clash.yaml`
@@ -91,15 +86,24 @@ After installation, `ctl sub` will show:
 - `karing.txt`
 - `sub.txt`
 - `raw.txt`
+- `sub.json`
 - `client-info.txt`
 
 ## Client Import Mapping
 
-- `Clash / Clash Party`: `clash.yaml`
+- `Mihomo / Clash Party`: `clash.yaml`
 - `v2rayN`: `v2rayn.txt`
 - `Shadowrocket`: `shadowrocket.txt`
 - `Karing`: `karing.txt`
 - `Not sure`: `universal`
+
+## Client Filtering Policy
+
+- `clash.yaml` keeps all five protocols.
+- `v2rayn.txt` keeps all five protocols.
+- `shadowrocket.txt`, `karing.txt`, and the generic `sub.txt` intentionally exclude `VLESS + XHTTP + Reality` to avoid import failures on clients that still lag behind the latest XHTTP handling.
+- `raw.txt` keeps the full set for manual import.
+- `sub.json` exposes the subscription mapping in a machine-readable form.
 
 ## Service Checks
 
@@ -125,17 +129,17 @@ This checks the current VPS egress IP against:
 
 - `BBR / network tuning` is optional and is not enabled automatically.
 - `Protocol` does not equal `unlock`. Netflix, TikTok, ChatGPT, Claude, Gemini, and similar services mostly depend on the VPS egress IP, ASN type, region, and reputation.
-- `clash.yaml` excludes `AnyTLS` on purpose to reduce import errors in stricter clients.
-- `karing.txt` keeps `AnyTLS` because Karing handles it better.
-- `nginx` fronts the subscription site, WS routes, and the gRPC endpoint.
+- `nginx` serves only the subscription hub and HTTPS redirect layer. Reality nodes are exposed on their own TCP ports.
 - `acme.sh` handles certificate issuance and renewal.
+- `ctl uninstall` removes CTL-managed configs, certificates, binaries, and legacy `kimi` leftovers, while keeping the `nginx` and `acme.sh` packages installed.
 
 ## Credits / References
 
 - `sing-box`: [https://sing-box.sagernet.org](https://sing-box.sagernet.org)
+- `Xray-core`: [https://github.com/XTLS/Xray-core](https://github.com/XTLS/Xray-core)
 - `acme.sh`: [https://github.com/acmesh-official/acme.sh](https://github.com/acmesh-official/acme.sh)
 - `nginx`: [https://nginx.org](https://nginx.org)
-- `Project X WebSocket transport docs`: [https://xtls.github.io/en/config/transports/websocket](https://xtls.github.io/en/config/transports/websocket)
-- `Project X gRPC transport docs`: [https://xtls.github.io/en/config/transports/grpc.html](https://xtls.github.io/en/config/transports/grpc.html)
+- `Project X REALITY docs`: [https://xtls.github.io/en/config/transport.html](https://xtls.github.io/en/config/transport.html)
+- `Project X XHTTP docs`: [https://xtls.github.io/en/config/transports/xhttp.html](https://xtls.github.io/en/config/transports/xhttp.html)
 - `Mihomo docs`: [https://wiki.metacubex.one/en/](https://wiki.metacubex.one/en/)
 - `v2rayN`: [https://github.com/2dust/v2rayN](https://github.com/2dust/v2rayN)
