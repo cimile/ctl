@@ -2248,22 +2248,39 @@ restart_all() {
 }
 
 uninstall_all() {
+  local domain_to_remove legacy_state legacy_domain
+  need_root
   load_state
-  if ! confirm "Uninstall CTL multi-protocol stack and panel?"; then
+  legacy_state="/etc/kimi/state.env"
+  domain_to_remove="${DOMAIN:-}"
+  if [ -z "$domain_to_remove" ] && [ -f "$legacy_state" ]; then
+    legacy_domain="$(awk -F'"' '/^DOMAIN=/{print $2; exit}' "$legacy_state" 2>/dev/null || true)"
+    domain_to_remove="${legacy_domain:-}"
+  fi
+  if ! confirm "Permanently uninstall CTL and purge managed data?"; then
     info "Uninstall cancelled."
     return 0
   fi
   systemctl disable --now sing-box >/dev/null 2>&1 || true
-  rm -f "$SING_SERVICE" "$SING_CONFIG" "$NGINX_CONF" "$SELF_BIN" "$SELF_URL_FILE"
-  rm -rf "$APP_HOME" "$APP_ETC" "$APP_WWW" "$CERT_DIR"
+  rm -f "$SING_SERVICE" "/etc/systemd/system/ctl.service" "/etc/systemd/system/kimi.service"
+  rm -f "$SING_CONFIG" "$NGINX_CONF" "$SELF_BIN" "$SELF_URL_FILE" "$SYSCTL_CONF"
+  rm -f "/etc/nginx/conf.d/ctl.conf.bak."* "/etc/nginx/conf.d/kimi.conf" "/etc/nginx/conf.d/kimi.conf.bak."*
+  rm -f "/etc/nginx/sites-enabled/ctl.conf" "/etc/nginx/sites-available/ctl.conf"
+  rm -f "/etc/nginx/sites-enabled/kimi.conf" "/etc/nginx/sites-available/kimi.conf"
+  rm -f "/usr/local/bin/kimi" "/usr/local/bin/sing-box"
+  rm -f "/etc/sysctl.d/98-kimi.conf" "/etc/cron.d/ctl" "/etc/cron.d/kimi"
+  rm -rf "$APP_HOME" "$APP_ETC" "$APP_WWW" "$CERT_DIR" "$SING_DIR"
+  rm -rf "/opt/kimi" "/etc/kimi" "/var/www/kimi" "/etc/ssl/kimi"
   systemctl daemon-reload
+  sysctl --system >/dev/null 2>&1 || true
   if systemctl is-active nginx >/dev/null 2>&1; then
     systemctl reload nginx || true
   fi
-  if [ -n "${DOMAIN:-}" ] && [ -x "$ACME_SH" ]; then
-    "$ACME_SH" --remove -d "$DOMAIN" --ecc >/dev/null 2>&1 || true
+  if [ -n "$domain_to_remove" ] && [ -x "$ACME_SH" ]; then
+    "$ACME_SH" --remove -d "$domain_to_remove" --ecc >/dev/null 2>&1 || true
+    rm -rf "${ACME_HOME}/${domain_to_remove}_ecc"
   fi
-  info "CTL-managed files were removed. nginx and acme.sh packages were left in place to avoid affecting other sites."
+  info "CTL-managed files and legacy CTL/Kimi leftovers were removed. nginx and acme.sh packages were left in place to avoid affecting other sites."
 }
 
 install_all() {
